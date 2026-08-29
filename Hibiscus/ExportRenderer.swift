@@ -9,7 +9,6 @@ nonisolated enum HibiscusExportFormat: String, CaseIterable, Identifiable, Senda
     case photo = "Photo"
     case polaroid = "Polaroid"
     case palette = "Palette"
-    case colorPads = "Color Pads"
 
     var id: Self { self }
 
@@ -18,7 +17,6 @@ nonisolated enum HibiscusExportFormat: String, CaseIterable, Identifiable, Senda
         case .photo: "photo"
         case .polaroid: "rectangle.portrait"
         case .palette: "swatchpalette"
-        case .colorPads: "square.grid.2x2"
         }
     }
 }
@@ -242,64 +240,6 @@ nonisolated enum HibiscusExportRenderer {
             )
         case .palette:
             palette(image: editedImage, composition: paletteComposition)
-        case .colorPads:
-            colorPads(image: editedImage, settings: settings)
-        }
-    }
-
-    private static func colorPads(image: UIImage, settings: GradeSettings) -> UIImage {
-        let width: CGFloat = 1800
-        let ratio = image.size.width / max(1, image.size.height)
-        let photoHeight = max(width * 0.58, min(width * 1.65, width / max(0.01, ratio)))
-        let controlsHeight: CGFloat = 760
-        let canvas = CGSize(width: width, height: photoHeight + controlsHeight)
-        let padSize: CGFloat = 560
-        let gap: CGFloat = 80
-        let firstX = (width - padSize * 2 - gap) / 2
-        let padY = photoHeight + 64
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        format.opaque = true
-
-        return UIGraphicsImageRenderer(size: canvas, format: format).image { context in
-            UIColor(red: 0.965, green: 0.958, blue: 0.938, alpha: 1).setFill()
-            context.fill(CGRect(origin: .zero, size: canvas))
-            drawAspectFit(image, in: CGRect(x: 0, y: 0, width: width, height: photoHeight))
-
-            let styleRect = CGRect(x: firstX, y: padY, width: padSize, height: padSize)
-            let accentRect = CGRect(x: firstX + padSize + gap, y: padY, width: padSize, height: padSize)
-            drawGradePad(
-                in: styleRect,
-                colors: stylePadColors(for: settings.style),
-                warmCornerColor: mix(UIColor(settings.style.tint), with: .systemOrange, amount: 0.28),
-                toneTopAlpha: 0.78,
-                toneClearLocation: 0.42,
-                toneBottomAlpha: 0.88,
-                point: settings.stylePoint,
-                context: context.cgContext
-            )
-            drawGradePad(
-                in: accentRect,
-                colors: accentPadColors(for: settings.accent),
-                warmCornerColor: nil,
-                toneTopAlpha: 0.72,
-                toneClearLocation: 0.40,
-                toneBottomAlpha: 0.86,
-                point: settings.accentPoint,
-                context: context.cgContext
-            )
-
-            let labelAttributes: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: 42, weight: .semibold),
-                .foregroundColor: UIColor(white: 0.14, alpha: 0.88)
-            ]
-            drawCentered(settings.style.rawValue, beneath: styleRect, attributes: labelAttributes)
-            drawAccentLabel(
-                beneath: accentRect,
-                accent: settings.accent,
-                attributes: labelAttributes,
-                context: context.cgContext
-            )
         }
     }
 
@@ -468,174 +408,6 @@ nonisolated enum HibiscusExportRenderer {
             withAttributes: attributes
         )
         context.restoreGState()
-    }
-
-    private static func stylePadColors(for style: GradeStyle) -> [UIColor] {
-        let tint = UIColor(style.tint)
-        return [UIColor(white: 0.56, alpha: 1), tint.withAlphaComponent(0.76), tint]
-    }
-
-    private static func accentPadColors(for accent: AccentColor) -> [UIColor] {
-        let base = UIColor(red: accent.red, green: accent.green, blue: accent.blue, alpha: 1)
-        return [mix(base, with: .systemBlue, amount: 0.42), base, mix(base, with: .systemOrange, amount: 0.38)]
-    }
-
-    private static func drawGradePad(
-        in rect: CGRect,
-        colors: [UIColor],
-        warmCornerColor: UIColor?,
-        toneTopAlpha: CGFloat,
-        toneClearLocation: CGFloat,
-        toneBottomAlpha: CGFloat,
-        point: CGPoint,
-        context: CGContext
-    ) {
-        context.saveGState()
-        let path = UIBezierPath(roundedRect: rect, cornerRadius: rect.width * (15 / 175))
-        path.addClip()
-
-        if let horizontal = CGGradient(
-            colorsSpace: CGColorSpace(name: CGColorSpace.sRGB),
-            colors: colors.map(\.cgColor) as CFArray,
-            locations: [0, 0.5, 1]
-        ) {
-            context.drawLinearGradient(
-                horizontal,
-                start: CGPoint(x: rect.minX, y: rect.midY),
-                end: CGPoint(x: rect.maxX, y: rect.midY),
-                options: []
-            )
-        }
-        if let warmCornerColor,
-           let corner = CGGradient(
-               colorsSpace: CGColorSpace(name: CGColorSpace.sRGB),
-               colors: [warmCornerColor.withAlphaComponent(0.54).cgColor, UIColor.clear.cgColor] as CFArray,
-               locations: [0, 1]
-           ) {
-            context.drawRadialGradient(
-                corner,
-                startCenter: CGPoint(x: rect.maxX, y: rect.maxY),
-                startRadius: 0,
-                endCenter: CGPoint(x: rect.maxX, y: rect.maxY),
-                endRadius: rect.width * (150 / 175),
-                options: []
-            )
-        }
-        if let tone = CGGradient(
-            colorsSpace: CGColorSpace(name: CGColorSpace.sRGB),
-            colors: [
-                UIColor.white.withAlphaComponent(toneTopAlpha).cgColor,
-                UIColor.clear.cgColor,
-                UIColor.black.withAlphaComponent(toneBottomAlpha).cgColor
-            ] as CFArray,
-            locations: [0, toneClearLocation, 1]
-        ) {
-            context.drawLinearGradient(
-                tone,
-                start: CGPoint(x: rect.midX, y: rect.minY),
-                end: CGPoint(x: rect.midX, y: rect.maxY),
-                options: []
-            )
-        }
-
-        let inset = rect.width * 0.09
-        for row in 0..<11 {
-            for column in 0..<11 {
-                let x = rect.minX + inset + (rect.width - inset * 2) * CGFloat(column) / 10
-                let y = rect.minY + inset + (rect.height - inset * 2) * CGFloat(row) / 10
-                let radius = rect.width * (row > 7 ? 1.65 / 175 : 1.35 / 175)
-                UIColor.white.withAlphaComponent(0.36 + CGFloat(row) / 10 * 0.42).setFill()
-                context.fillEllipse(in: CGRect(x: x - radius, y: y - radius, width: radius * 2, height: radius * 2))
-            }
-        }
-
-        let centerMarkerSize = rect.width * (8 / 175)
-        context.setStrokeColor(UIColor.white.withAlphaComponent(0.34).cgColor)
-        context.setLineWidth(max(1, rect.width / 175))
-        context.strokeEllipse(in: CGRect(
-            x: rect.midX - centerMarkerSize / 2,
-            y: rect.midY - centerMarkerSize / 2,
-            width: centerMarkerSize,
-            height: centerMarkerSize
-        ))
-        context.restoreGState()
-
-        let controlSize = rect.width * (22 / 175)
-        let controlCenter = CGPoint(
-            x: rect.minX + controlSize / 2 + min(1, max(0, point.x)) * (rect.width - controlSize),
-            y: rect.minY + controlSize / 2 + min(1, max(0, point.y)) * (rect.height - controlSize)
-        )
-        context.saveGState()
-        context.setShadow(
-            offset: CGSize(width: 0, height: rect.width * (2 / 175)),
-            blur: rect.width * (5 / 175),
-            color: UIColor.black.withAlphaComponent(0.50).cgColor
-        )
-        UIColor.white.setFill()
-        context.fillEllipse(in: CGRect(
-            x: controlCenter.x - controlSize / 2,
-            y: controlCenter.y - controlSize / 2,
-            width: controlSize,
-            height: controlSize
-        ))
-        context.restoreGState()
-        context.setStrokeColor(UIColor.black.withAlphaComponent(0.34).cgColor)
-        context.setLineWidth(max(1, rect.width / 175))
-        context.strokeEllipse(in: CGRect(
-            x: controlCenter.x - controlSize / 2,
-            y: controlCenter.y - controlSize / 2,
-            width: controlSize,
-            height: controlSize
-        ))
-    }
-
-    private static func drawCentered(
-        _ string: String,
-        beneath rect: CGRect,
-        attributes: [NSAttributedString.Key: Any]
-    ) {
-        let size = string.size(withAttributes: attributes)
-        string.draw(
-            at: CGPoint(x: rect.midX - size.width / 2, y: rect.maxY + 24),
-            withAttributes: attributes
-        )
-    }
-
-    private static func drawAccentLabel(
-        beneath rect: CGRect,
-        accent: AccentColor,
-        attributes: [NSAttributedString.Key: Any],
-        context: CGContext
-    ) {
-        let label = "Accent"
-        let labelSize = label.size(withAttributes: attributes)
-        let chipSize: CGFloat = 32
-        let gap: CGFloat = 14
-        let totalWidth = labelSize.width + gap + chipSize
-        let originX = rect.midX - totalWidth / 2
-        let originY = rect.maxY + 24
-        label.draw(at: CGPoint(x: originX, y: originY), withAttributes: attributes)
-
-        UIColor(red: accent.red, green: accent.green, blue: accent.blue, alpha: 1).setFill()
-        context.fillEllipse(in: CGRect(
-            x: originX + labelSize.width + gap,
-            y: originY + (labelSize.height - chipSize) / 2,
-            width: chipSize,
-            height: chipSize
-        ))
-    }
-
-    private static func mix(_ lhs: UIColor, with rhs: UIColor, amount: CGFloat) -> UIColor {
-        var lr: CGFloat = 0, lg: CGFloat = 0, lb: CGFloat = 0, la: CGFloat = 0
-        var rr: CGFloat = 0, rg: CGFloat = 0, rb: CGFloat = 0, ra: CGFloat = 0
-        lhs.getRed(&lr, green: &lg, blue: &lb, alpha: &la)
-        rhs.getRed(&rr, green: &rg, blue: &rb, alpha: &ra)
-        return UIColor(
-            red: lr + (rr - lr) * amount,
-            green: lg + (rg - lg) * amount,
-            blue: lb + (rb - lb) * amount,
-            alpha: 1
-        )
     }
 
     private static func hexString(for color: AccentColor) -> String {

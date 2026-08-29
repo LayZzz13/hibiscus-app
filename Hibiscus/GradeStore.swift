@@ -40,6 +40,11 @@ struct GradeImportItem {
     let metadata: PhotoMetadata
 }
 
+nonisolated struct GradeStyleSession: Equatable, Sendable {
+    var settings: GradeSettings
+    var isAccentCustomized: Bool
+}
+
 struct GradeSessionPhoto: Identifiable {
     let id: UUID
     let image: UIImage
@@ -47,6 +52,7 @@ struct GradeSessionPhoto: Identifiable {
     var settings: GradeSettings
     var automaticAccent: AccentColor
     var isAccentCustomized: Bool
+    var styleSessions: [GradeStyle: GradeStyleSession]
     let metadata: PhotoMetadata
 }
 
@@ -149,7 +155,13 @@ final class GradeStore: ObservableObject {
                 thumbnail: item.thumbnail,
                 settings: newPhotoSettings,
                 automaticAccent: .warmGray,
-                isAccentCustomized: false,
+                isAccentCustomized: carriesCurrentEdits && isAccentCustomized,
+                styleSessions: [
+                    newPhotoSettings.style: GradeStyleSession(
+                        settings: newPhotoSettings,
+                        isAccentCustomized: carriesCurrentEdits && isAccentCustomized
+                    )
+                ],
                 metadata: item.metadata
             )
         }
@@ -173,12 +185,17 @@ final class GradeStore: ObservableObject {
     }
 
     func selectStyle(_ style: GradeStyle) {
+        guard photos.indices.contains(currentIndex) else { return }
+        guard style != settings.style else {
+            if sourceImage != nil { isStyleRailExpanded = false }
+            return
+        }
         recordUndo()
-        settings.style = style
-        settings.stylePoint = CGPoint(x: 0.5, y: 0.5)
-        settings.styleStrength = 0.78
-        settings.accentPoint = CGPoint(x: 0.5, y: 0.5)
-        settings.accentStrength = 0.52
+        syncCurrentPhoto()
+        let session = photos[currentIndex].styleSessions[style]
+            ?? Self.defaultStyleSession(style: style, automaticAccent: automaticAccent)
+        settings = session.settings
+        isAccentCustomized = session.isAccentCustomized
         if sourceImage != nil { isStyleRailExpanded = false }
         activeSurface = .style
         preferences.lastGradeStyle = style
@@ -191,9 +208,16 @@ final class GradeStore: ObservableObject {
         guard photos.count > 1 else { return }
         syncCurrentPhoto()
         for index in photos.indices where index != currentIndex {
-            photos[index].settings.style = settings.style
-            photos[index].settings.stylePoint = settings.stylePoint
-            photos[index].settings.styleStrength = settings.styleStrength
+            var session = photos[index].styleSessions[settings.style]
+                ?? Self.defaultStyleSession(
+                    style: settings.style,
+                    automaticAccent: photos[index].automaticAccent
+                )
+            session.settings.stylePoint = settings.stylePoint
+            session.settings.styleStrength = settings.styleStrength
+            photos[index].styleSessions[settings.style] = session
+            photos[index].settings = session.settings
+            photos[index].isAccentCustomized = session.isAccentCustomized
         }
         statusMessage = "Applied \(settings.style.rawValue) to all photos"
         UINotificationFeedbackGenerator().notificationOccurred(.success)
@@ -207,6 +231,10 @@ final class GradeStore: ObservableObject {
             photos[index].settings.accentPoint = settings.accentPoint
             photos[index].settings.accentStrength = settings.accentStrength
             photos[index].isAccentCustomized = true
+            photos[index].styleSessions[photos[index].settings.style] = GradeStyleSession(
+                settings: photos[index].settings,
+                isAccentCustomized: true
+            )
         }
         statusMessage = "Applied the custom Accent to all photos"
         UINotificationFeedbackGenerator().notificationOccurred(.success)
@@ -511,13 +539,22 @@ final class GradeStore: ObservableObject {
         }
     }
 
-    func saveFilesToPhotos(_ urls: [URL]) {
-        guard !urls.isEmpty else { return }
+    func saveFilesToPhotos(_ urls: [URL], completion: @escaping (Bool) -> Void) {
+        guard !urls.isEmpty else {
+            completion(false)
+            return
+        }
         PHPhotoLibrary.requestAuthorization(for: .addOnly) { [weak self] status in
-            guard let store = self else { return }
+            guard let store = self else {
+                Task { @MainActor in completion(false) }
+                return
+            }
             guard status == .authorized || status == .limited else {
                 store.cleanExportFiles(urls)
-                Task { @MainActor in store.statusMessage = "Allow photo access in Settings to save." }
+                Task { @MainActor in
+                    store.statusMessage = "Allow photo access in Settings to save."
+                    completion(false)
+                }
                 return
             }
             PHPhotoLibrary.shared().performChanges {
@@ -532,6 +569,7 @@ final class GradeStore: ObservableObject {
                         ? (urls.count == 1 ? "Saved to Photos" : "Saved \(urls.count) photos")
                         : "Couldn’t save these photos."
                     if success { UINotificationFeedbackGenerator().notificationOccurred(.success) }
+                    completion(success)
                 }
             }
         }
@@ -559,6 +597,20 @@ final class GradeStore: ObservableObject {
         return settings
     }
 
+    private static func defaultStyleSession(
+        style: GradeStyle,
+        automaticAccent: AccentColor
+    ) -> GradeStyleSession {
+        var settings = GradeSettings()
+        settings.style = style
+        settings.stylePoint = CGPoint(x: 0.5, y: 0.5)
+        settings.accentPoint = CGPoint(x: 0.5, y: 0.5)
+        settings.styleStrength = 0.78
+        settings.accentStrength = 0.52
+        settings.accent = automaticAccent
+        return GradeStyleSession(settings: settings, isAccentCustomized: false)
+    }
+
     private func loadCurrentPhoto(expandStyleRail: Bool) {
         guard let photo = currentPhoto else {
             clearSessionState()
@@ -582,6 +634,10 @@ final class GradeStore: ObservableObject {
         photos[currentIndex].settings = settings
         photos[currentIndex].automaticAccent = automaticAccent
         photos[currentIndex].isAccentCustomized = isAccentCustomized
+        photos[currentIndex].styleSessions[settings.style] = GradeStyleSession(
+            settings: settings,
+            isAccentCustomized: isAccentCustomized
+        )
     }
 
     private func clearSessionState() {
@@ -680,10 +736,17 @@ final class GradeStore: ObservableObject {
                     guard let self, self.preferences.autoAccent,
                           generation == self.analysisGeneration,
                           let index = self.photos.firstIndex(where: { $0.id == id }) else { return }
-                    self.photos[index].automaticAccent = accent
-                    if !self.photos[index].isAccentCustomized {
-                        self.photos[index].settings.accent = accent
+                    var photo = self.photos[index]
+                    photo.automaticAccent = accent
+                    for style in photo.styleSessions.keys {
+                        guard var session = photo.styleSessions[style], !session.isAccentCustomized else { continue }
+                        session.settings.accent = accent
+                        photo.styleSessions[style] = session
                     }
+                    if !photo.isAccentCustomized {
+                        photo.settings.accent = accent
+                    }
+                    self.photos[index] = photo
                     if index == self.currentIndex {
                         self.automaticAccent = accent
                         if !self.isAccentCustomized {

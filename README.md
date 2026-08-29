@@ -17,16 +17,18 @@ Camera opens directly into a live, character-processed viewfinder.
 
 Ten Camera characters provide distinct image-making responses:
 
-- **α Alpha** — clean, neutral, modern color.
-- **β Beta** — warm 35mm color-negative character.
-- **γ Gamma** — crisp early-digital and CCD-inspired color.
-- **δ Delta** — punchy compact-camera and direct-flash character.
-- **ε Epsilon** — creamy, warm instant-photo color.
-- **ζ Zeta** — imperfect daylight disposable-camera energy.
-- **η Eta** — cool night-digital color for artificial light.
-- **θ Theta** — restrained, people-focused portrait color.
-- **σ Sigma** — dense, structured street-photography color.
-- **ω Omega** — carefully separated monochrome.
+- **α Alpha — Clean Modern** — clean, neutral color with restrained processing.
+- **β Beta — Color Negative** — warm mids, gentle contrast, and soft highlight behavior.
+- **γ Gamma — Early Digital** — crisp, cool compact-digital color and firmer contrast.
+- **δ Delta — Flash Compact** — punchy direct-flash energy and separated ambient shadows.
+- **ε Epsilon — Instant** — creamy warm whites, muted color, and gentle tone.
+- **ζ Zeta — Disposable** — controlled daylight imperfection with clear central detail.
+- **η Eta — Night Digital** — cool artificial-light color with deep, structured blacks.
+- **θ Theta — Portrait** — pleasant skin response and gentler highlight transitions.
+- **σ Sigma — Street** — dense urban tone, detailed blacks, and crisp structure.
+- **ω Omega — Monochrome** — deliberate grayscale response and tonal separation.
+
+For detailed Camera design notes and intended behavior, see [`docs/cameras.md`](docs/cameras.md).
 
 Camera supports the useful controls provided by the current iPhone, including tap focus, exposure compensation, AE/AF lock, pinch zoom, device-derived lens choices, flash, timer, aspect ratio, grid, front/rear switching, and supported processed or RAW capture formats.
 
@@ -88,7 +90,6 @@ Hibiscus can save or share:
 - **Photo** — the edited photograph.
 - **Polaroid** — an instant-photo-style card with optional metadata, drawing, and Hibiscus mark.
 - **Palette** — the edited photograph with up to five representative color blocks.
-- **Color Pads** — the edited photograph with visual representations of its Style and Accent pads.
 
 Normal photo exports can preserve supported source metadata and location when enabled. Originals are never overwritten.
 

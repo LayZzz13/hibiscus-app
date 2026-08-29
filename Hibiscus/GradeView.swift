@@ -16,6 +16,10 @@ struct GradeView: View {
     @State private var styleRailPosition: GradeStyle?
     @State private var showsAccentPicker = false
     @State private var photoSwipeOffset: CGFloat = 0
+    @State private var didCompleteShare = false
+    @State private var pendingSharePhotoIDs: Set<UUID> = []
+    @State private var exportedPhotoIDs: Set<UUID> = []
+    @State private var showsCompletionPrompt = false
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -89,16 +93,35 @@ struct GradeView: View {
             guard !newItems.isEmpty else { return }
             Task { await importPhotos(from: newItems) }
         }
-        .sheet(isPresented: Binding(
-            get: { !shareFiles.isEmpty },
-            set: {
-                if !$0 {
-                    store.cleanExportFiles(shareFiles)
-                    shareFiles = []
-                }
+        .onChange(of: store.photos.map(\.id)) { _, photoIDs in
+            exportedPhotoIDs.formIntersection(photoIDs)
+            if photoIDs.isEmpty {
+                pendingSharePhotoIDs = []
+                didCompleteShare = false
             }
-        )) {
-            ShareSheet(items: shareFiles).ignoresSafeArea()
+        }
+        .sheet(
+            isPresented: Binding(
+                get: { !shareFiles.isEmpty },
+                set: {
+                    if !$0 {
+                        store.cleanExportFiles(shareFiles)
+                        shareFiles = []
+                    }
+                }
+            ),
+            onDismiss: {
+                let completedPhotoIDs = pendingSharePhotoIDs
+                pendingSharePhotoIDs = []
+                guard didCompleteShare else { return }
+                didCompleteShare = false
+                registerCompletedExport(for: completedPhotoIDs)
+            }
+        ) {
+            ShareSheet(items: shareFiles) { completed in
+                didCompleteShare = completed
+            }
+            .ignoresSafeArea()
         }
         .sheet(item: $polaroidRequest) { request in
             PolaroidComposerSheet(
@@ -144,6 +167,14 @@ struct GradeView: View {
                 onUseAutomatic: store.useAutomaticAccent,
                 onApplyToAll: store.applyCustomAccentToAll
             )
+        }
+        .alert("Continue Editing?", isPresented: $showsCompletionPrompt) {
+            Button("Continue Editing", role: .cancel) {}
+            Button("Done", role: .destructive) {
+                store.removeAllPhotos()
+            }
+        } message: {
+            Text("Your export is complete. Keep this temporary Grade session open?")
         }
     }
 
@@ -283,8 +314,8 @@ struct GradeView: View {
             .padding(.top, 6)
 
         }
-        .padding(.top, 10)
-        .padding(.bottom, 14)
+        .padding(.top, 26)
+        .padding(.bottom, 10)
     }
 
     private func padColumn(kind: ActiveGradeSurface, size: CGFloat) -> some View {
@@ -470,7 +501,7 @@ struct GradeView: View {
             polaroidRequest = PolaroidExportRequest(batch: batch, shares: shares)
         case .palette:
             paletteRequest = PaletteExportRequest(batch: batch, shares: shares)
-        case .photo, .colorPads:
+        case .photo:
             performExport(format: format, batch: batch, shares: shares)
         }
     }
@@ -484,6 +515,9 @@ struct GradeView: View {
     ) {
         Task {
             await Task.yield()
+            let requestedPhotoIDs = batch
+                ? store.photos.map(\.id)
+                : store.currentPhoto.map { [$0.id] } ?? []
             let files = await store.exportFiles(
                 format: format,
                 batch: batch,
@@ -494,12 +528,29 @@ struct GradeView: View {
                 store.statusMessage = "Couldn’t render this export."
                 return
             }
+            let completedPhotoIDs = files.count == requestedPhotoIDs.count
+                ? Set(requestedPhotoIDs)
+                : []
             if shares {
+                pendingSharePhotoIDs = completedPhotoIDs
                 shareFiles = files
             } else {
-                store.saveFilesToPhotos(files)
+                store.saveFilesToPhotos(files) { success in
+                    if success {
+                        registerCompletedExport(for: completedPhotoIDs)
+                    }
+                }
             }
         }
+    }
+
+    private func registerCompletedExport(for photoIDs: Set<UUID>) {
+        guard !photoIDs.isEmpty else { return }
+        let sessionPhotoIDs = Set(store.photos.map(\.id))
+        guard !sessionPhotoIDs.isEmpty else { return }
+        exportedPhotoIDs.formUnion(photoIDs)
+        exportedPhotoIDs.formIntersection(sessionPhotoIDs)
+        showsCompletionPrompt = sessionPhotoIDs.isSubset(of: exportedPhotoIDs)
     }
 
     private var currentStrength: Double {
@@ -553,6 +604,9 @@ struct GradeView: View {
             }
     }
 
+    // The floating tab bar consumes roughly the bottom safe-area height. Keeping
+    // this clearance separate from the editor's own 10-point bottom padding
+    // matches the Camera panel without letting Strength slip beneath the bar.
     private var navigationClearance: CGFloat { 34 }
 
     private var photoPickerLimit: Int {
@@ -561,8 +615,8 @@ struct GradeView: View {
 
     private func photoHeight(for availableHeight: CGFloat) -> CGFloat {
         if store.sourceImage == nil { return availableHeight }
-        let editorReserve: CGFloat = 348
-        return min(availableHeight * 0.55, max(290, availableHeight - editorReserve), 455)
+        let editorReserve: CGFloat = 368
+        return min(availableHeight * 0.53, max(280, availableHeight - editorReserve), 438)
     }
 
     private func importPhotos(from items: [PhotosPickerItem]) async {
@@ -766,29 +820,62 @@ private struct ComposerPageDots: View {
     @Binding var selection: Int
 
     var body: some View {
-        GeometryReader { proxy in
-            HStack(spacing: 7) {
-                ForEach(0..<count, id: \.self) { index in
+        HStack(spacing: 0) {
+            ForEach(0..<count, id: \.self) { index in
+                Button {
+                    guard selection != index else { return }
+                    selection = index
+                    UISelectionFeedbackGenerator().selectionChanged()
+                } label: {
                     Circle()
-                        .fill(index == selection ? Color.primary : Color.secondary.opacity(0.36))
+                        .fill(index == selection ? Color.white : Color.white.opacity(0.38))
                         .frame(width: index == selection ? 7 : 5, height: index == selection ? 7 : 5)
+                        .frame(width: 22, height: 28)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Photo \(index + 1)")
+                .accessibilityValue(index == selection ? "Selected" : "Not selected")
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        guard count > 1 else { return }
-                        let progress = min(1, max(0, value.location.x / max(1, proxy.size.width)))
-                        selection = Int((progress * CGFloat(count - 1)).rounded())
-                    }
-            )
         }
-        .frame(width: max(52, CGFloat(count) * 14), height: 28)
+        .frame(minWidth: 52)
+        .frame(height: 28)
         .hibiscusGlass(in: Capsule())
+        .animation(.snappy(duration: 0.18), value: selection)
+        .frame(maxWidth: 380)
+        .contentShape(Rectangle())
+        .modifier(ComposerPageSwipeModifier(count: count, selection: $selection))
         .accessibilityLabel("Export photo selector")
         .accessibilityValue("Photo \(selection + 1) of \(count)")
+    }
+}
+
+private struct ComposerPageSwipeModifier: ViewModifier {
+    let count: Int
+    @Binding var selection: Int
+    var isEnabled = true
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if isEnabled {
+            content.simultaneousGesture(pagingGesture)
+        } else {
+            content
+        }
+    }
+
+    private var pagingGesture: some Gesture {
+        DragGesture(minimumDistance: 18)
+            .onEnded { value in
+                guard count > 1,
+                      abs(value.translation.width) > abs(value.translation.height),
+                      abs(value.predictedEndTranslation.width) > 40 else { return }
+                let direction = value.predictedEndTranslation.width < 0 ? 1 : -1
+                let nextSelection = min(count - 1, max(0, selection + direction))
+                guard nextSelection != selection else { return }
+                selection = nextSelection
+                UISelectionFeedbackGenerator().selectionChanged()
+            }
     }
 }
 
@@ -815,6 +902,8 @@ private struct PaletteComposerSheet: View {
                         .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .modifier(ComposerPageSwipeModifier(count: photos.count, selection: $currentIndex))
 
                 if photos.count > 1 {
                     ComposerPageDots(count: photos.count, selection: $currentIndex)
@@ -1245,6 +1334,16 @@ private struct PolaroidComposerSheet: View {
                 .onAppear { drawingCanvasSize = size }
                 .onChange(of: size) { _, newSize in drawingCanvasSize = newSize }
                 .allowsHitTesting(mode == .draw)
+
+            if photos.count > 1, mode != .draw {
+                let pagingAreaTop = inset + photoSize
+                Color.clear
+                    .frame(width: size.width, height: max(1, size.height - pagingAreaTop))
+                    .contentShape(Rectangle())
+                    .offset(y: pagingAreaTop)
+                    .modifier(ComposerPageSwipeModifier(count: photos.count, selection: $currentIndex))
+                    .accessibilityLabel("Swipe between Polaroid photos")
+            }
         }
         .frame(width: size.width, height: size.height)
         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
