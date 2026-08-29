@@ -19,7 +19,10 @@ nonisolated enum ImageRenderer {
         targetMegapixels: Int
     ) -> UIImage? {
         guard let source = normalizedCIImage(image) else { return nil }
-        var input = centerCrop(source, to: aspectRatio)
+        let orientedAspectRatio = source.extent.width > source.extent.height
+            ? 1 / aspectRatio
+            : aspectRatio
+        var input = centerCrop(source, to: orientedAspectRatio)
         let targetPixels = CGFloat(targetMegapixels) * 1_000_000
         let sourcePixels = input.extent.width * input.extent.height
         if targetPixels > 0, sourcePixels > targetPixels * 1.03 {

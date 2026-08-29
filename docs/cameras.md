@@ -41,13 +41,13 @@ Image degradation is not a substitute for character. Every Camera should remain 
 
 ---
 
-## α Alpha — Clean Modern
+## ✨ Clear — Clean Modern
 
 **Character:** Neutral · Natural · Modern
 
 ### Intent / overview
 
-Alpha is the neutral Hibiscus Camera. It produces a clean, natural image with restrained computational character while preserving modern image quality. Alpha acts as the quality baseline for the other Camera characters.
+Clear is the neutral Hibiscus Camera. It produces a clean, natural image with restrained computational character while preserving modern image quality. Clear acts as the quality baseline for the other Camera characters.
 
 ### Color
 
@@ -80,13 +80,13 @@ Alpha is the neutral Hibiscus Camera. It produces a clean, natural image with re
 
 ---
 
-## β Beta — Color Negative
+## 🎞️ Negative — Color Negative
 
 **Character:** Warm · Gentle · Photographic
 
 ### Intent / overview
 
-Beta is inspired by the broad visual character of consumer color-negative photography, not by any specific film stock or film format.
+Negative is inspired by the broad visual character of consumer color-negative photography, not by any specific film stock or film format.
 
 ### Color
 
@@ -99,7 +99,7 @@ Beta is inspired by the broad visual character of consumer color-negative photog
 ### Tone
 
 - softer highlight rolloff;
-- gentler contrast than Alpha;
+- gentler contrast than Clear;
 - softer tonal transitions.
 
 ### Texture
@@ -118,13 +118,13 @@ Beta is inspired by the broad visual character of consumer color-negative photog
 
 ---
 
-## γ Gamma — Early Digital
+## 💿 Digital — Early Digital / CCD
 
 **Character:** Cool · Crisp · Direct
 
 ### Intent / overview
 
-Gamma is inspired by early compact digital and CCD-era photography. Its identity comes from direct color, firmer tone, and crisp rendering rather than artificial degradation.
+Digital is inspired by early compact digital and CCD-era photography. Its identity comes from direct color, firmer tone, and crisp rendering rather than artificial degradation.
 
 ### Color
 
@@ -154,13 +154,13 @@ Gamma is inspired by early compact digital and CCD-era photography. Its identity
 
 ---
 
-## δ Delta — Flash Compact
+## ⚡️ Flash — Flash Compact
 
 **Character:** Punchy · Direct · Energetic
 
 ### Intent / overview
 
-Delta is built around direct-flash compact-camera energy. Its identity should come strongly from flash behavior when flash is used.
+Flash is built around direct-flash compact-camera energy. Its identity should come strongly from flash behavior when flash is used.
 
 ### Color
 
@@ -191,13 +191,13 @@ Delta is built around direct-flash compact-camera energy. Its identity should co
 
 ---
 
-## ε Epsilon — Instant
+## 🖼️ Instant — Instant
 
 **Character:** Creamy · Warm · Soft
 
 ### Intent / overview
 
-Epsilon is inspired by soft instant-photo character while preserving useful clarity.
+Instant is inspired by soft instant-photo character while preserving useful clarity.
 
 ### Color
 
@@ -227,13 +227,13 @@ Epsilon is inspired by soft instant-photo character while preserving useful clar
 
 ---
 
-## ζ Zeta — Disposable
+## 🎟️ Disposable — Disposable
 
 **Character:** Casual · Imperfect · Daylight
 
 ### Intent / overview
 
-Zeta is inspired by inexpensive daylight disposable cameras. It embraces controlled imperfection without sacrificing a usable photograph.
+Disposable is inspired by inexpensive daylight disposable cameras. It embraces controlled imperfection without sacrificing a usable photograph.
 
 ### Color
 
@@ -263,13 +263,13 @@ Zeta is inspired by inexpensive daylight disposable cameras. It embraces control
 
 ---
 
-## η Eta — Night Digital
+## 🌙 Night — Night Digital
 
 **Character:** Cool · Luminous · Urban
 
 ### Intent / overview
 
-Eta is designed specifically for night and artificial-light scenes. It separates illuminated subjects from dark surroundings without globally lifting the image.
+Night is designed specifically for night and artificial-light scenes. It separates illuminated subjects from dark surroundings without globally lifting the image.
 
 ### Color
 
@@ -299,13 +299,13 @@ Eta is designed specifically for night and artificial-light scenes. It separates
 
 ---
 
-## θ Theta — Portrait
+## 🌸 Portrait — Portrait
 
 **Character:** Warm · Gentle · People-focused
 
 ### Intent / overview
 
-Theta is designed primarily around people. It favors pleasant skin response and gentle tonal transitions without becoming a beauty filter.
+Portrait is designed primarily around people. It favors pleasant skin response and gentle tonal transitions without becoming a beauty filter.
 
 ### Color
 
@@ -334,13 +334,13 @@ Theta is designed primarily around people. It favors pleasant skin response and 
 
 ---
 
-## σ Sigma — Street
+## 🏙️ Street — Street
 
 **Character:** Dense · Graphic · Structured
 
 ### Intent / overview
 
-Sigma is designed for dense, graphic urban photography with strong structural separation and detailed shadows.
+Street is designed for dense, graphic urban photography with strong structural separation and detailed shadows.
 
 ### Color
 
@@ -371,13 +371,13 @@ Sigma is designed for dense, graphic urban photography with strong structural se
 
 ---
 
-## ω Omega — Monochrome
+## 🌓 Mono — Monochrome
 
 **Character:** Tonal · Expressive · Monochrome
 
 ### Intent / overview
 
-Omega is a dedicated monochrome Camera character. It should translate source color relationships into deliberate grayscale separation rather than merely removing saturation.
+Mono is a dedicated monochrome Camera character. It should translate source color relationships into deliberate grayscale separation rather than merely removing saturation.
 
 ### Color response
 

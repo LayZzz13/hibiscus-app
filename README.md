@@ -17,20 +17,20 @@ Camera opens directly into a live, character-processed viewfinder.
 
 Ten Camera characters provide distinct image-making responses:
 
-- **α Alpha — Clean Modern** — clean, neutral color with restrained processing.
-- **β Beta — Color Negative** — warm mids, gentle contrast, and soft highlight behavior.
-- **γ Gamma — Early Digital** — crisp, cool compact-digital color and firmer contrast.
-- **δ Delta — Flash Compact** — punchy direct-flash energy and separated ambient shadows.
-- **ε Epsilon — Instant** — creamy warm whites, muted color, and gentle tone.
-- **ζ Zeta — Disposable** — controlled daylight imperfection with clear central detail.
-- **η Eta — Night Digital** — cool artificial-light color with deep, structured blacks.
-- **θ Theta — Portrait** — pleasant skin response and gentler highlight transitions.
-- **σ Sigma — Street** — dense urban tone, detailed blacks, and crisp structure.
-- **ω Omega — Monochrome** — deliberate grayscale response and tonal separation.
+- **✨ Clear — Clean Modern** — clean, neutral color with restrained processing.
+- **🎞️ Negative — Color Negative** — warm mids, gentle contrast, and soft highlight behavior.
+- **💿 Digital — Early Digital / CCD** — crisp, cool compact-digital color and firmer contrast.
+- **⚡️ Flash — Flash Compact** — punchy direct-flash energy and separated ambient shadows.
+- **🖼️ Instant — Instant** — creamy warm whites, muted color, and gentle tone.
+- **🎟️ Disposable — Disposable** — controlled daylight imperfection with clear central detail.
+- **🌙 Night — Night Digital** — cool artificial-light color with deep, structured blacks.
+- **🌸 Portrait — Portrait** — pleasant skin response and gentler highlight transitions.
+- **🏙️ Street — Street** — dense urban tone, detailed blacks, and crisp structure.
+- **🌓 Mono — Monochrome** — deliberate grayscale response and tonal separation.
 
 For detailed Camera design notes and intended behavior, see [`docs/cameras.md`](docs/cameras.md).
 
-Camera supports the useful controls provided by the current iPhone, including tap focus, exposure compensation, AE/AF lock, pinch zoom, device-derived lens choices, flash, timer, aspect ratio, grid, front/rear switching, and supported processed or RAW capture formats.
+Camera uses continuous system autofocus and supports exposure compensation, device-derived discrete lens choices, flash, timer, aspect ratio, grid, front/rear switching, and supported processed or RAW capture formats.
 
 ## Grade
 

@@ -251,7 +251,6 @@ nonisolated enum HibiscusExportRenderer {
     ) -> UIImage {
         let canvas = CGSize(width: 1800, height: 2320)
         let photoRect = CGRect(x: 90, y: 90, width: 1620, height: 1620)
-        let lowerRect = CGRect(x: 90, y: 1740, width: 1620, height: 490)
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         format.opaque = true
@@ -270,24 +269,21 @@ nonisolated enum HibiscusExportRenderer {
                     metadata,
                     settings: settings,
                     includesLocation: composition.includesLocation,
-                    in: lowerRect,
+                    in: canvas,
                     context: context.cgContext
                 )
             }
 
             if composition.showsMark {
-                let markCenterX = composition.showsMetadata ? lowerRect.maxX - 180 : lowerRect.midX
-                let markRect = CGRect(x: markCenterX - 66, y: lowerRect.midY - 66, width: 132, height: 132)
-                drawAppIcon(in: markRect, context: context.cgContext)
-                let brand = "Hibiscus"
-                let brandAttributes: [NSAttributedString.Key: Any] = [
-                    .font: UIFont.systemFont(ofSize: 48, weight: .semibold),
-                    .foregroundColor: UIColor(white: 0.17, alpha: 0.72)
-                ]
-                let brandSize = brand.size(withAttributes: brandAttributes)
-                brand.draw(
-                    at: CGPoint(x: markCenterX - brandSize.width / 2, y: markRect.maxY + 22),
-                    withAttributes: brandAttributes
+                drawBrandMark(
+                    centeredAt: CGPoint(
+                        x: canvas.width * (composition.showsMetadata ? 0.86 : 0.5),
+                        y: canvas.height * 0.865
+                    ),
+                    iconSize: canvas.width * 0.073,
+                    spacing: canvas.width * 0.018,
+                    fontSize: canvas.width * 0.027,
+                    context: context.cgContext
                 )
             }
 
@@ -343,17 +339,12 @@ nonisolated enum HibiscusExportRenderer {
             }
 
             let brandArea = CGRect(x: 0, y: photoHeight + colorHeight, width: width, height: brandHeight)
-            let markRect = CGRect(x: brandArea.midX - 38, y: brandArea.minY + 20, width: 76, height: 76)
-            drawAppIcon(in: markRect, context: context.cgContext)
-            let brand = "Hibiscus"
-            let brandAttributes: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: 34, weight: .semibold),
-                .foregroundColor: UIColor(white: 0.17, alpha: 0.72)
-            ]
-            let brandSize = brand.size(withAttributes: brandAttributes)
-            brand.draw(
-                at: CGPoint(x: brandArea.midX - brandSize.width / 2, y: markRect.maxY + 12),
-                withAttributes: brandAttributes
+            drawBrandMark(
+                centeredAt: CGPoint(x: brandArea.midX, y: brandArea.midY),
+                iconSize: width * 0.042,
+                spacing: width * 0.006,
+                fontSize: width * 0.019,
+                context: context.cgContext
             )
         }
     }
@@ -376,7 +367,7 @@ nonisolated enum HibiscusExportRenderer {
         _ metadata: PhotoMetadata,
         settings: GradeSettings,
         includesLocation: Bool,
-        in rect: CGRect,
+        in canvas: CGSize,
         context: CGContext
     ) {
         var lines: [String] = []
@@ -389,22 +380,32 @@ nonisolated enum HibiscusExportRenderer {
         if includesLocation, let location = metadata.location {
             lines.append(location.uppercased())
         }
-        let camera = metadata.cameraCharacter.map { "\($0.glyph) \($0.name.uppercased()) · " } ?? ""
+        let camera = metadata.cameraCharacter.map { "\($0.symbol) \($0.name.uppercased()) · " } ?? ""
         lines.append("\(camera)\(settings.style.rawValue.uppercased())")
-        let hardware = [metadata.cameraMake, metadata.cameraModel, metadata.lensModel]
-            .compactMap({ $0 })
-            .joined(separator: " · ")
-        if !hardware.isEmpty {
-            lines.append(hardware.uppercased())
-        }
 
         context.saveGState()
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineSpacing = 8
         let attributes: [NSAttributedString.Key: Any] = [
             .font: UIFont.monospacedSystemFont(ofSize: 29, weight: .medium),
-            .foregroundColor: UIColor(white: 0.22, alpha: 0.74)
+            .foregroundColor: UIColor(white: 0.22, alpha: 0.74),
+            .paragraphStyle: paragraphStyle
         ]
-        lines.prefix(4).joined(separator: "\n").draw(
-            in: CGRect(x: rect.minX + 38, y: rect.minY + 150, width: rect.width - 430, height: 230),
+        let text = lines.prefix(3).joined(separator: "\n") as NSString
+        let textWidth = canvas.width * 0.61
+        let measured = text.boundingRect(
+            with: CGSize(width: textWidth, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: attributes,
+            context: nil
+        )
+        text.draw(
+            in: CGRect(
+                x: canvas.width * 0.36 - textWidth / 2,
+                y: canvas.height * 0.855 - ceil(measured.height) / 2,
+                width: textWidth,
+                height: ceil(measured.height)
+            ),
             withAttributes: attributes
         )
         context.restoreGState()
@@ -477,6 +478,36 @@ nonisolated enum HibiscusExportRenderer {
         UIBezierPath(roundedRect: rect, cornerRadius: rect.width * 0.22).addClip()
         icon.draw(in: rect)
         context.restoreGState()
+    }
+
+    private static func drawBrandMark(
+        centeredAt center: CGPoint,
+        iconSize: CGFloat,
+        spacing: CGFloat,
+        fontSize: CGFloat,
+        context: CGContext
+    ) {
+        let brand = "Hibiscus" as NSString
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: fontSize, weight: .semibold),
+            .foregroundColor: UIColor(white: 0.17, alpha: 0.72)
+        ]
+        let brandSize = brand.size(withAttributes: attributes)
+        let contentHeight = iconSize + spacing + brandSize.height
+        let markRect = CGRect(
+            x: center.x - iconSize / 2,
+            y: center.y - contentHeight / 2,
+            width: iconSize,
+            height: iconSize
+        )
+        drawAppIcon(in: markRect, context: context)
+        brand.draw(
+            at: CGPoint(
+                x: center.x - brandSize.width / 2,
+                y: markRect.maxY + spacing
+            ),
+            withAttributes: attributes
+        )
     }
 }
 

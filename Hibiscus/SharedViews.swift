@@ -5,23 +5,6 @@ extension Color {
 }
 import UIKit
 
-struct CameraCharacterIcon: View {
-    let character: CameraCharacter
-    let size: CGFloat
-    let fontSize: CGFloat
-
-    var body: some View {
-        ZStack {
-            Circle().fill(character.identityColor)
-            Text(character.glyph)
-                .font(.system(size: fontSize, weight: .semibold, design: .serif))
-                .foregroundStyle(.white)
-                .offset(y: fontSize * character.glyphOpticalOffset)
-        }
-        .frame(width: size, height: size)
-    }
-}
-
 struct PhotoFillView: View {
     let image: UIImage
 

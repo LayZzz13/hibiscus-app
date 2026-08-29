@@ -3,16 +3,20 @@ import Foundation
 
 nonisolated enum DefaultCameraPreference: String, CaseIterable, Identifiable, Sendable {
     case lastUsed = "Last Used"
-    case alpha = "Alpha"
+    case clear = "Clear"
 
     var id: Self { self }
+
+    var displayName: String {
+        switch self {
+        case .lastUsed: "Last Used"
+        case .clear: "Clear"
+        }
+    }
 }
 
 @MainActor
 final class AppPreferences: ObservableObject {
-    static let repositoryURL = URL(string: "https://github.com/T-1234567890/hibiscus-app")!
-    static let openChromaIndexURL = URL(string: "https://github.com/T-1234567890/open-chroma-index")!
-
     @Published var cameraGridEnabled: Bool { didSet { save(cameraGridEnabled, for: .cameraGridEnabled) } }
     @Published var defaultCamera: DefaultCameraPreference { didSet { save(defaultCamera.rawValue, for: .defaultCamera) } }
     @Published var defaultAspectRatio: CameraAspectRatio { didSet { save(defaultAspectRatio.rawValue, for: .defaultAspectRatio) } }
@@ -29,6 +33,14 @@ final class AppPreferences: ObservableObject {
     @Published var includeLocation: Bool { didSet { save(includeLocation, for: .includeLocation) } }
     @Published var polaroidMetadata: Bool { didSet { save(polaroidMetadata, for: .polaroidMetadata) } }
     @Published var hibiscusMark: Bool { didSet { save(hibiscusMark, for: .hibiscusMark) } }
+    @Published var exploreMoreAfterExport: Bool {
+        didSet {
+            save(exploreMoreAfterExport, for: .exploreMoreAfterExport)
+            if exploreMoreAfterExport, !oldValue {
+                resetExploreMoreEligibility()
+            }
+        }
+    }
 
     var lastCameraCharacter: CameraCharacter {
         didSet { save(lastCameraCharacter.rawValue, for: .lastCameraCharacter) }
@@ -41,13 +53,16 @@ final class AppPreferences: ObservableObject {
     }
 
     private let defaults: UserDefaults
+    private var exploreMoreDismissedAt: Date?
+    private var exploreMoreOpenedAt: Date?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         cameraGridEnabled = defaults.object(forKey: Key.cameraGridEnabled.rawValue) as? Bool ?? true
-        defaultCamera = DefaultCameraPreference(
-            rawValue: defaults.string(forKey: Key.defaultCamera.rawValue) ?? ""
-        ) ?? .lastUsed
+        let storedDefaultCamera = defaults.string(forKey: Key.defaultCamera.rawValue)
+        defaultCamera = storedDefaultCamera == "Alpha"
+            ? .clear
+            : DefaultCameraPreference(rawValue: storedDefaultCamera ?? "") ?? .lastUsed
         defaultAspectRatio = CameraAspectRatio(
             rawValue: defaults.string(forKey: Key.defaultAspectRatio.rawValue) ?? ""
         ) ?? .standard
@@ -59,6 +74,9 @@ final class AppPreferences: ObservableObject {
         includeLocation = defaults.object(forKey: Key.includeLocation.rawValue) as? Bool ?? true
         polaroidMetadata = defaults.object(forKey: Key.polaroidMetadata.rawValue) as? Bool ?? false
         hibiscusMark = defaults.object(forKey: Key.hibiscusMark.rawValue) as? Bool ?? true
+        exploreMoreAfterExport = defaults.object(forKey: Key.exploreMoreAfterExport.rawValue) as? Bool ?? true
+        exploreMoreDismissedAt = defaults.object(forKey: Key.exploreMoreDismissedAt.rawValue) as? Date
+        exploreMoreOpenedAt = defaults.object(forKey: Key.exploreMoreOpenedAt.rawValue) as? Date
         lastCameraCharacter = CameraCharacter(
             rawValue: defaults.string(forKey: Key.lastCameraCharacter.rawValue) ?? ""
         ) ?? .alpha
@@ -66,6 +84,38 @@ final class AppPreferences: ObservableObject {
         lastGradeStyle = GradeStyle(
             rawValue: defaults.string(forKey: Key.lastGradeStyle.rawValue) ?? ""
         ) ?? .pure
+    }
+
+    func shouldPresentExploreMoreAfterExport(at date: Date = Date()) -> Bool {
+        guard exploreMoreAfterExport else { return false }
+        if let dismissedAt = exploreMoreDismissedAt,
+           date < dismissedAt.addingTimeInterval(7 * 24 * 60 * 60) {
+            return false
+        }
+        if let openedAt = exploreMoreOpenedAt,
+           date < openedAt.addingTimeInterval(20 * 24 * 60 * 60) {
+            return false
+        }
+        return true
+    }
+
+    func recordExploreMoreDismissal(at date: Date = Date()) {
+        exploreMoreDismissedAt = date
+        save(date, for: .exploreMoreDismissedAt)
+    }
+
+    func recordExploreMoreEcosystemOpen(at date: Date = Date()) {
+        exploreMoreOpenedAt = date
+        exploreMoreDismissedAt = nil
+        save(date, for: .exploreMoreOpenedAt)
+        defaults.removeObject(forKey: Key.exploreMoreDismissedAt.rawValue)
+    }
+
+    private func resetExploreMoreEligibility() {
+        exploreMoreDismissedAt = nil
+        exploreMoreOpenedAt = nil
+        defaults.removeObject(forKey: Key.exploreMoreDismissedAt.rawValue)
+        defaults.removeObject(forKey: Key.exploreMoreOpenedAt.rawValue)
     }
 
     private func save(_ value: Any, for key: Key) {
@@ -84,6 +134,9 @@ final class AppPreferences: ObservableObject {
         case includeLocation = "settings.export.includeLocation"
         case polaroidMetadata = "settings.export.polaroidMetadata"
         case hibiscusMark = "settings.export.hibiscusMark"
+        case exploreMoreAfterExport = "settings.discovery.exploreMoreAfterExport"
+        case exploreMoreDismissedAt = "state.discovery.exploreMoreDismissedAt"
+        case exploreMoreOpenedAt = "state.discovery.exploreMoreOpenedAt"
         case lastCameraCharacter = "state.camera.lastCharacter"
         case lastExposure = "state.camera.lastExposure"
         case lastGradeStyle = "state.grade.lastStyle"

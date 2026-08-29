@@ -22,19 +22,31 @@ struct ContentView: View {
             }
             .tag(AppDestination.camera)
             .tabItem {
-                Label(AppDestination.camera.rawValue, systemImage: AppDestination.camera.symbol)
+                Label {
+                    Text(LocalizedStringKey(AppDestination.camera.rawValue))
+                } icon: {
+                    Image(systemName: AppDestination.camera.symbol)
+                }
             }
 
             GradeView(store: gradeStore, preferences: preferences, isActive: destination == .grade)
                 .tag(AppDestination.grade)
                 .tabItem {
-                    Label(AppDestination.grade.rawValue, systemImage: AppDestination.grade.symbol)
+                    Label {
+                        Text(LocalizedStringKey(AppDestination.grade.rawValue))
+                    } icon: {
+                        Image(systemName: AppDestination.grade.symbol)
+                    }
                 }
 
             SettingsView(preferences: preferences)
                 .tag(AppDestination.settings)
                 .tabItem {
-                    Label(AppDestination.settings.rawValue, systemImage: AppDestination.settings.symbol)
+                    Label {
+                        Text(LocalizedStringKey(AppDestination.settings.rawValue))
+                    } icon: {
+                        Image(systemName: AppDestination.settings.symbol)
+                    }
                 }
         }
         .tint(.white)

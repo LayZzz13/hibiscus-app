@@ -1,3 +1,4 @@
+import AVKit
 import SwiftUI
 
 struct CameraView: View {
@@ -5,8 +6,8 @@ struct CameraView: View {
     @StateObject private var camera: CameraService
     @State private var showsExposure = false
     @State private var isSelectionPanelExpanded = true
-    @State private var focusPoint: CGPoint?
-    @State private var focusIndicatorTask: Task<Void, Never>?
+    @State private var cameraControlRotation: Angle = .zero
+    @State private var cameraControlSide: CGFloat = 0
     let isActive: Bool
     let sendToGrade: (UIImage, CameraCharacter, Date?) -> Void
 
@@ -44,77 +45,74 @@ struct CameraView: View {
                     .onTapGesture { camera.statusMessage = nil }
             }
         }
-        .onAppear { if isActive { camera.start() } }
+        .onAppear {
+            UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+            updateCameraControlRotation(UIDevice.current.orientation)
+            if isActive { camera.start() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
+            updateCameraControlRotation(UIDevice.current.orientation)
+        }
         .onChange(of: isActive) { _, active in
             active ? camera.start() : camera.stop()
         }
-        .onDisappear { camera.stop() }
+        .onDisappear {
+            UIDevice.current.endGeneratingDeviceOrientationNotifications()
+            camera.stop()
+        }
     }
 
     private var liveCamera: some View {
         GeometryReader { proxy in
             let previewHeight = min(proxy.size.height, proxy.size.width / camera.selectedRatio.portraitRatio)
+            let zoomBottomInset: CGFloat = switch camera.selectedRatio {
+            case .widescreen, .standard: 232
+            case .square: 245
+            }
+            let zoomY = max(150, proxy.size.height - zoomBottomInset)
+            let previewTop = camera.selectedRatio == .square
+                ? max(0, zoomY - previewHeight + 24)
+                : 0
+            let isLandscapeControlLayout = cameraControlSide != 0
+            let topControlX = isLandscapeControlLayout
+                ? (cameraControlSide > 0 ? proxy.size.width - 29 : 29)
+                : proxy.size.width / 2
+            let topControlY = isLandscapeControlLayout
+                ? previewTop + previewHeight / 2
+                : previewTop + 28
+            let zoomX = isLandscapeControlLayout
+                ? (cameraControlSide > 0 ? 35 : proxy.size.width - 35)
+                : proxy.size.width / 2
+            let positionedZoomY = isLandscapeControlLayout ? proxy.size.height / 2 : zoomY
 
             ZStack(alignment: .top) {
-                VStack(spacing: 0) {
-                    cameraPreview
-                        .frame(width: proxy.size.width, height: previewHeight)
-                        .clipped()
-                        .overlay(alignment: .bottom) {
-                            LinearGradient(
-                                colors: [.clear, Color(white: 0.065).opacity(0.38)],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                            .frame(height: 24)
-                            .allowsHitTesting(false)
-                        }
-                    Spacer(minLength: 0)
-                }
+                cameraPreview
+                    .frame(width: proxy.size.width, height: previewHeight)
+                    .clipped()
+                    .offset(y: previewTop)
 
                 if camera.authorizationState == .authorized {
                     if preferences.cameraGridEnabled {
                         CameraGrid()
                             .frame(width: proxy.size.width, height: previewHeight)
+                            .offset(y: previewTop)
                             .allowsHitTesting(false)
                     }
 
-                    CameraInteractionOverlay(
-                        onFocus: { point, locked in
-                            focusPoint = point
-                            camera.focus(at: point, lock: locked)
-                            focusIndicatorTask?.cancel()
-                            guard !locked else { return }
-                            focusIndicatorTask = Task { @MainActor in
-                                try? await Task.sleep(for: .seconds(1.4))
-                                guard !Task.isCancelled, !camera.focusLocked else { return }
-                                withAnimation(.easeOut(duration: 0.2)) { focusPoint = nil }
-                            }
-                        },
-                        onExposureDrag: { deltaY, dragPoint in
-                            guard let focusPoint,
-                                  hypot(focusPoint.x - dragPoint.x, focusPoint.y - dragPoint.y) < 0.28 else { return }
-                            camera.adjustExposure(by: -Double(deltaY) / 80)
-                        },
-                        onPinch: { scale in
-                            camera.changeZoom(by: scale)
-                        }
+                    CameraCaptureEventOverlay(
+                        isCaptureEnabled: isActive && camera.isRunning && camera.countdown == nil && !camera.isCapturing,
+                        onCapture: camera.capture
                     )
                     .frame(width: proxy.size.width, height: previewHeight)
-
-                    if let focusPoint {
-                        FocusIndicator(isLocked: camera.focusLocked, exposure: camera.exposure)
-                            .position(x: focusPoint.x * proxy.size.width, y: focusPoint.y * previewHeight)
-                            .allowsHitTesting(false)
-                            .transition(.opacity.combined(with: .scale(scale: 0.85)))
-                    }
+                    .offset(y: previewTop)
 
                     cameraTopBar
-                        .padding(.horizontal, 12)
-                        .padding(.top, 12)
+                        .frame(width: isLandscapeControlLayout ? 68 : proxy.size.width - 24)
+                        .position(x: topControlX, y: topControlY)
 
                     zoomControl
-                        .offset(y: max(70, previewHeight - 50))
+                        .rotationEffect(cameraControlRotation)
+                        .position(x: zoomX, y: positionedZoomY)
 
                     if let countdown = camera.countdown {
                         Text("\(countdown)")
@@ -122,6 +120,7 @@ struct CameraView: View {
                             .contentTransition(.numericText())
                             .shadow(color: .black.opacity(0.55), radius: 12)
                             .frame(width: proxy.size.width, height: previewHeight)
+                            .offset(y: previewTop)
                     }
 
                     cameraControls
@@ -134,17 +133,19 @@ struct CameraView: View {
     }
 
     private var zoomControl: some View {
-        Button(action: camera.cycleLens) {
+        Button(action: camera.selectNextLens) {
             Text(camera.lensLabel)
                 .font(.caption.weight(.bold))
-                .frame(minWidth: 38, minHeight: 26)
+                .foregroundStyle(.white)
+                .frame(minWidth: 36, minHeight: 30)
                 .contentShape(Capsule())
-                .hibiscusGlass(interactive: true, in: Capsule())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Zoom \(camera.lensLabel)")
-        .accessibilityHint("Tap for the next available lens")
-        .frame(width: 280, height: 30)
+        .accessibilityHint("Cycles through the available lenses")
+        .padding(2)
+        .hibiscusGlass(tint: .black.opacity(0.18), in: Capsule())
+        .frame(minWidth: 40, minHeight: 34)
         .zIndex(2)
     }
 
@@ -184,76 +185,101 @@ struct CameraView: View {
 
     private var cameraTopBar: some View {
         HibiscusGlassContainer(spacing: 7) {
-            HStack(spacing: 7) {
-                Menu {
-                    Picker("Flash", selection: $camera.flashMode) {
-                        ForEach(CaptureFlashMode.allCases) { mode in
-                            Label(mode.rawValue, systemImage: mode.systemImage).tag(mode)
-                        }
-                    }
-                } label: {
-                    Image(systemName: camera.flashMode.systemImage)
-                        .frame(width: 18, height: 18)
+            if cameraControlSide == 0 {
+                HStack(spacing: 7) {
+                    flashTopControl
+                    Spacer()
+                    ratioTimerTopControl
+                    qualityTopControl
                 }
-                .hibiscusGlassButtonStyle()
-                .disabled(!camera.flashAvailable)
-                .opacity(camera.flashAvailable ? 1 : 0.46)
-
-                Spacer()
-
-                Menu {
-                    Section("Ratio") {
-                        Picker("Photo Ratio", selection: $camera.selectedRatio) {
-                            ForEach(CameraAspectRatio.allCases) { ratio in
-                                Text(ratio.rawValue).tag(ratio)
-                            }
-                        }
-                    }
-                    Section("Timer") {
-                        Picker("Timer", selection: $camera.selectedTimer) {
-                            ForEach(CaptureTimerOption.allCases) { timer in
-                                Text(timer.rawValue).tag(timer)
-                            }
-                        }
-                    }
-                } label: {
-                    HStack(spacing: 5) {
-                        Text(camera.selectedRatio.rawValue)
-                        if camera.selectedTimer != .off {
-                            Image(systemName: "timer")
-                            Text(camera.selectedTimer.rawValue)
-                        }
-                    }
-                    .font(.caption2.weight(.bold))
-                    .frame(minHeight: 18)
+            } else {
+                VStack(spacing: 9) {
+                    flashTopControl
+                    ratioTimerTopControl
+                    qualityTopControl
                 }
-                .hibiscusGlassButtonStyle()
-
-                Menu {
-                    Section("HEIF") {
-                        ForEach(camera.availableMegapixels, id: \.self) { megapixels in
-                            Button("\(megapixels) MP") {
-                                camera.selectCapture(format: .processed, megapixels: megapixels)
-                            }
-                        }
-                    }
-                    Section("RAW") {
-                        ForEach(camera.availableRawMegapixels, id: \.self) { megapixels in
-                            Button("RAW \(megapixels) MP") {
-                                camera.selectCapture(format: .raw, megapixels: megapixels)
-                            }
-                        }
-                    }
-                } label: {
-                    topSettingLabel(
-                        camera.selectedFormat == .raw
-                            ? "RAW \(camera.selectedMegapixels)"
-                            : "\(camera.selectedMegapixels) MP"
-                    )
-                }
-                .hibiscusGlassButtonStyle()
             }
         }
+    }
+
+    private var flashTopControl: some View {
+        Menu {
+            Picker("Flash", selection: $camera.flashMode) {
+                ForEach(CaptureFlashMode.allCases) { mode in
+                    Label {
+                        Text(LocalizedStringKey(mode.rawValue))
+                    } icon: {
+                        Image(systemName: mode.systemImage)
+                    }
+                    .tag(mode)
+                }
+            }
+        } label: {
+            Image(systemName: camera.flashMode.systemImage)
+                .frame(width: 18, height: 18)
+        }
+        .hibiscusGlassButtonStyle()
+        .disabled(!camera.flashAvailable)
+        .opacity(camera.flashAvailable ? 1 : 0.46)
+        .rotationEffect(cameraControlRotation)
+    }
+
+    private var ratioTimerTopControl: some View {
+        Menu {
+            Section("Ratio") {
+                Picker("Photo Ratio", selection: $camera.selectedRatio) {
+                    ForEach(CameraAspectRatio.allCases) { ratio in
+                        Text(ratio.rawValue).tag(ratio)
+                    }
+                }
+            }
+            Section("Timer") {
+                Picker("Timer", selection: $camera.selectedTimer) {
+                    ForEach(CaptureTimerOption.allCases) { timer in
+                        Text(LocalizedStringKey(timer.rawValue)).tag(timer)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Text(camera.selectedRatio.rawValue)
+                if camera.selectedTimer != .off {
+                    Image(systemName: "timer")
+                    Text(LocalizedStringKey(camera.selectedTimer.rawValue))
+                }
+            }
+            .font(.caption2.weight(.bold))
+            .frame(minHeight: 18)
+        }
+        .hibiscusGlassButtonStyle()
+        .rotationEffect(cameraControlRotation)
+    }
+
+    private var qualityTopControl: some View {
+        Menu {
+            Section("HEIF") {
+                ForEach(camera.availableMegapixels, id: \.self) { megapixels in
+                    Button("\(megapixels) MP") {
+                        camera.selectCapture(format: .processed, megapixels: megapixels)
+                    }
+                }
+            }
+            Section("RAW") {
+                ForEach(camera.availableRawMegapixels, id: \.self) { megapixels in
+                    Button("RAW \(megapixels) MP") {
+                        camera.selectCapture(format: .raw, megapixels: megapixels)
+                    }
+                }
+            }
+        } label: {
+            topSettingLabel(
+                camera.selectedFormat == .raw
+                    ? "RAW \(camera.selectedMegapixels)"
+                    : "\(camera.selectedMegapixels) MP"
+            )
+        }
+        .hibiscusGlassButtonStyle()
+        .rotationEffect(cameraControlRotation)
     }
 
     private func topSettingLabel(_ text: String) -> some View {
@@ -273,16 +299,19 @@ struct CameraView: View {
                     UISelectionFeedbackGenerator().selectionChanged()
                 } label: {
                     HStack(spacing: 6) {
-                        CameraCharacterIcon(character: camera.selectedCharacter, size: 27, fontSize: 17)
+                        Text(camera.selectedCharacter.symbol)
+                            .font(.system(size: 17))
+                            .foregroundStyle(Color.hibiscusAccent)
+                            .frame(width: 29, height: 29)
                         VStack(alignment: .leading, spacing: 0) {
                             Text(camera.selectedCharacter.name)
                                 .font(.subheadline.weight(.semibold))
-                            Text(camera.selectedCharacter.subtitle)
+                            Text(LocalizedStringKey(camera.selectedCharacter.subtitle))
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Text(isSelectionPanelExpanded ? "Hide" : "Controls")
+                        Text(LocalizedStringKey(isSelectionPanelExpanded ? "Hide" : "Controls"))
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
                         Image(systemName: isSelectionPanelExpanded ? "chevron.down" : "chevron.up")
@@ -329,31 +358,30 @@ struct CameraView: View {
                                 UISelectionFeedbackGenerator().selectionChanged()
                             } label: {
                                 VStack(spacing: 5) {
-                                    CameraCharacterIcon(character: character, size: 36, fontSize: 23)
-                                    .overlay {
-                                        Circle()
-                                            .stroke(.white.opacity(camera.selectedCharacter == character ? 0.72 : 0), lineWidth: 1)
-                                            .padding(1.5)
-                                    }
-                                    .scaleEffect(camera.selectedCharacter == character ? 1.035 : 1)
-                                    .shadow(
-                                        color: .black.opacity(camera.selectedCharacter == character ? 0.30 : 0.16),
-                                        radius: camera.selectedCharacter == character ? 3 : 2,
-                                        y: 2
-                                    )
+                                    Text(character.symbol)
+                                        .font(.system(size: 23))
+                                        .foregroundStyle(.white)
+                                        .frame(height: 29)
 
                                     Text(character.name)
                                         .font(.caption2.weight(camera.selectedCharacter == character ? .bold : .medium))
-                                        .foregroundStyle(.white.opacity(camera.selectedCharacter == character ? 1 : 0.72))
+                                        .foregroundStyle(.white.opacity(camera.selectedCharacter == character ? 1 : 0.78))
                                         .lineLimit(1)
                                 }
-                                .frame(width: 52)
+                                .frame(width: 54, height: 55)
+                                .background {
+                                    if camera.selectedCharacter == character {
+                                        RoundedRectangle(cornerRadius: 13, style: .continuous)
+                                            .fill(Color.hibiscusAccent)
+                                    }
+                                }
                                 .animation(.snappy(duration: 0.18), value: camera.selectedCharacter)
                             }
                             .buttonStyle(.plain)
                         }
                     }
                     .padding(.horizontal, 10)
+                    .padding(.top, 3)
                 }
 
                 Button {
@@ -400,6 +428,13 @@ struct CameraView: View {
                     .fill(.white)
                     .frame(width: 58, height: 58)
                     .overlay { Circle().stroke(.black.opacity(0.78), lineWidth: 3).padding(5) }
+                    .overlay {
+                        if camera.isProcessingCapture {
+                            ProgressView()
+                                .controlSize(.small)
+                                .tint(.black)
+                        }
+                    }
             }
             .buttonStyle(.plain)
             .hibiscusGlass(.clear, interactive: true, in: Circle())
@@ -418,7 +453,11 @@ struct CameraView: View {
         .padding(.horizontal, 18)
     }
 
-    private func permissionState(title: String, message: String, showsSettings: Bool) -> some View {
+    private func permissionState(
+        title: LocalizedStringKey,
+        message: LocalizedStringKey,
+        showsSettings: Bool
+    ) -> some View {
         ZStack {
             Color(white: 0.04)
             VStack(spacing: 10) {
@@ -455,20 +494,21 @@ struct CameraView: View {
             let photoWidth = min(maximumWidth, maximumHeight * imageRatio)
             let photoHeight = photoWidth / imageRatio
 
-            VStack(spacing: 10) {
-                PhotoFillView(image: displayImage)
-                    .frame(width: photoWidth, height: photoHeight)
-                    .background(.black)
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .stroke(.white.opacity(0.10), lineWidth: 0.5)
-                    }
-                    .shadow(color: .black.opacity(0.26), radius: 10, y: 4)
+            ZStack(alignment: .bottom) {
+                VStack(spacing: 10) {
+                    PhotoFitView(image: displayImage)
+                        .frame(width: photoWidth, height: photoHeight)
+                        .background(.black)
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .stroke(.white.opacity(0.10), lineWidth: 0.5)
+                        }
+                        .shadow(color: .black.opacity(0.26), radius: 10, y: 4)
 
-                captureMetadata
-
-                Spacer(minLength: 0)
+                    captureMetadata
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
 
                 HibiscusGlassContainer(spacing: 10) {
                     HStack(spacing: 10) {
@@ -486,22 +526,24 @@ struct CameraView: View {
                     }
                 }
                 .frame(height: 46)
+                .padding(.bottom, 26)
             }
-            .padding(.top, 22)
             .padding(.horizontal, 12)
-            .padding(.bottom, 26)
-            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
+            .frame(width: proxy.size.width, height: proxy.size.height)
         }
     }
 
     private var captureMetadata: some View {
         HStack(spacing: 9) {
-            CameraCharacterIcon(character: camera.selectedCharacter, size: 28, fontSize: 15)
+            Text(camera.selectedCharacter.symbol)
+                .font(.system(size: 19))
+                .foregroundStyle(Color.hibiscusAccent)
+                .frame(width: 28, height: 28)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(camera.selectedCharacter.name)
                     .font(.caption.weight(.semibold))
-                Text(camera.selectedCharacter.subtitle)
+                Text(LocalizedStringKey(camera.selectedCharacter.subtitle))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -529,13 +571,41 @@ struct CameraView: View {
         .frame(maxWidth: .infinity)
     }
 
-    private func resultButton(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
+    private func resultButton(
+        _ title: LocalizedStringKey,
+        systemImage: String,
+        action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
             Label(title, systemImage: systemImage)
                 .font(.subheadline.weight(.semibold))
                 .frame(maxWidth: .infinity)
         }
         .hibiscusGlassButtonStyle()
+    }
+
+    private func updateCameraControlRotation(_ orientation: UIDeviceOrientation) {
+        let rotation: Angle?
+        let side: CGFloat?
+        switch orientation {
+        case .landscapeLeft:
+            rotation = .degrees(90)
+            side = 1
+        case .landscapeRight:
+            rotation = .degrees(-90)
+            side = -1
+        case .portrait, .portraitUpsideDown:
+            rotation = .zero
+            side = 0
+        default:
+            rotation = nil
+            side = nil
+        }
+        guard let rotation, let side else { return }
+        withAnimation(.easeOut(duration: 0.18)) {
+            cameraControlRotation = rotation
+            cameraControlSide = side
+        }
     }
 }
 
@@ -561,38 +631,9 @@ private struct CameraGrid: View {
     }
 }
 
-private struct FocusIndicator: View {
-    let isLocked: Bool
-    let exposure: Double
-
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .stroke(.white.opacity(0.92), lineWidth: 1)
-                .frame(width: 48, height: 48)
-                .shadow(color: .black.opacity(0.4), radius: 2)
-            if isLocked {
-                Image(systemName: "lock.fill")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.white)
-            }
-            if abs(exposure) > 0.05 {
-                Text(String(format: "%+.1f EV", exposure))
-                    .font(.system(size: 9, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 6)
-                    .frame(height: 18)
-                    .background(.black.opacity(0.38), in: Capsule())
-                    .offset(y: 36)
-            }
-        }
-    }
-}
-
-private struct CameraInteractionOverlay: UIViewRepresentable {
-    let onFocus: (CGPoint, Bool) -> Void
-    let onExposureDrag: (CGFloat, CGPoint) -> Void
-    let onPinch: (CGFloat) -> Void
+private struct CameraCaptureEventOverlay: UIViewRepresentable {
+    let isCaptureEnabled: Bool
+    let onCapture: () -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -601,72 +642,31 @@ private struct CameraInteractionOverlay: UIViewRepresentable {
     func makeUIView(context: Context) -> UIView {
         let view = UIView(frame: .zero)
         view.backgroundColor = .clear
-
-        let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.tap(_:)))
-        let longPress = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.longPress(_:)))
-        longPress.minimumPressDuration = 0.48
-        let pan = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.pan(_:)))
-        pan.minimumNumberOfTouches = 1
-        pan.maximumNumberOfTouches = 1
-        let pinch = UIPinchGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.pinch(_:)))
-
-        tap.require(toFail: longPress)
-        pan.delegate = context.coordinator
-        pinch.delegate = context.coordinator
-        view.addGestureRecognizer(tap)
-        view.addGestureRecognizer(longPress)
-        view.addGestureRecognizer(pan)
-        view.addGestureRecognizer(pinch)
+        if #available(iOS 17.2, *) {
+            let captureInteraction = AVCaptureEventInteraction { [weak coordinator = context.coordinator] event in
+                guard event.phase == .ended else { return }
+                Task { @MainActor in coordinator?.parent.onCapture() }
+            }
+            captureInteraction.isEnabled = isCaptureEnabled
+            view.addInteraction(captureInteraction)
+        }
         return view
     }
 
     func updateUIView(_ uiView: UIView, context: Context) {
         context.coordinator.parent = self
+        if #available(iOS 17.2, *) {
+            uiView.interactions
+                .compactMap { $0 as? AVCaptureEventInteraction }
+                .forEach { $0.isEnabled = isCaptureEnabled }
+        }
     }
 
-    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
-        var parent: CameraInteractionOverlay
+    final class Coordinator: NSObject {
+        var parent: CameraCaptureEventOverlay
 
-        init(parent: CameraInteractionOverlay) {
+        init(parent: CameraCaptureEventOverlay) {
             self.parent = parent
-        }
-
-        @objc func tap(_ recognizer: UITapGestureRecognizer) {
-            guard let view = recognizer.view else { return }
-            parent.onFocus(normalizedPoint(recognizer.location(in: view), in: view), false)
-        }
-
-        @objc func longPress(_ recognizer: UILongPressGestureRecognizer) {
-            guard recognizer.state == .began, let view = recognizer.view else { return }
-            parent.onFocus(normalizedPoint(recognizer.location(in: view), in: view), true)
-        }
-
-        @objc func pan(_ recognizer: UIPanGestureRecognizer) {
-            guard recognizer.state == .changed, let view = recognizer.view else { return }
-            let translation = recognizer.translation(in: view)
-            let point = normalizedPoint(recognizer.location(in: view), in: view)
-            parent.onExposureDrag(translation.y, point)
-            recognizer.setTranslation(.zero, in: view)
-        }
-
-        @objc func pinch(_ recognizer: UIPinchGestureRecognizer) {
-            guard recognizer.state == .changed else { return }
-            parent.onPinch(recognizer.scale)
-            recognizer.scale = 1
-        }
-
-        func gestureRecognizer(
-            _ gestureRecognizer: UIGestureRecognizer,
-            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
-        ) -> Bool {
-            gestureRecognizer is UIPinchGestureRecognizer || otherGestureRecognizer is UIPinchGestureRecognizer
-        }
-
-        private func normalizedPoint(_ point: CGPoint, in view: UIView) -> CGPoint {
-            CGPoint(
-                x: min(1, max(0, point.x / max(1, view.bounds.width))),
-                y: min(1, max(0, point.y / max(1, view.bounds.height)))
-            )
         }
     }
 }

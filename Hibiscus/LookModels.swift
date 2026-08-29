@@ -20,50 +20,40 @@ nonisolated enum CameraCharacter: String, CaseIterable, Identifiable, Sendable {
 
     var id: Self { self }
 
-    var glyph: String {
+    var symbol: String {
         switch self {
-        case .alpha: "α"
-        case .beta: "β"
-        case .gamma: "γ"
-        case .delta: "δ"
-        case .epsilon: "ε"
-        case .zeta: "ζ"
-        case .eta: "η"
-        case .theta: "θ"
-        case .sigma: "σ"
-        case .omega: "ω"
-        }
-    }
-
-    /// Optical correction for the uneven visual centers of lowercase Greek glyphs.
-    /// The value is relative to the rendered font size so every icon size agrees.
-    var glyphOpticalOffset: CGFloat {
-        switch self {
-        case .gamma, .zeta, .eta: -0.070
-        case .beta, .delta, .theta: -0.045
-        case .alpha, .epsilon, .sigma, .omega: -0.035
+        case .alpha: "✨"
+        case .beta: "🎞️"
+        case .gamma: "💿"
+        case .delta: "⚡️"
+        case .epsilon: "🖼️"
+        case .zeta: "🎟️"
+        case .eta: "🌙"
+        case .theta: "🌸"
+        case .sigma: "🏙️"
+        case .omega: "🌓"
         }
     }
 
     var name: String {
         switch self {
-        case .alpha: "Alpha"
-        case .beta: "Beta"
-        case .gamma: "Gamma"
-        case .delta: "Delta"
-        case .epsilon: "Epsilon"
-        case .zeta: "Zeta"
-        case .eta: "Eta"
-        case .theta: "Theta"
-        case .sigma: "Sigma"
-        case .omega: "Omega"
+        case .alpha: "Clear"
+        case .beta: "Negative"
+        case .gamma: "Digital"
+        case .delta: "Flash"
+        case .epsilon: "Instant"
+        case .zeta: "Disposable"
+        case .eta: "Night"
+        case .theta: "Portrait"
+        case .sigma: "Street"
+        case .omega: "Mono"
         }
     }
 
     var subtitle: String {
         switch self {
         case .alpha: "Clean Modern"
-        case .beta: "35mm Negative"
+        case .beta: "Color Negative"
         case .gamma: "Early Digital / CCD"
         case .delta: "Flash Compact"
         case .epsilon: "Instant"

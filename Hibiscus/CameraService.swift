@@ -12,6 +12,13 @@ enum CameraAuthorizationState {
     case unavailable
 }
 
+nonisolated struct CameraLensOption: Identifiable, Equatable, Sendable {
+    let factor: Double
+    let label: String
+
+    var id: String { label }
+}
+
 @MainActor
 final class CameraService: NSObject, ObservableObject {
     @Published private(set) var capturedImage: UIImage?
@@ -22,8 +29,8 @@ final class CameraService: NSObject, ObservableObject {
     @Published private(set) var flashAvailable = false
     @Published var flashMode: CaptureFlashMode = .auto
     @Published private(set) var lensLabel = "1×"
+    @Published private(set) var lensOptions = [CameraLensOption(factor: 1, label: "1×")]
     @Published private(set) var exposure: Double = 0
-    @Published private(set) var focusLocked = false
     @Published var selectedCharacter: CameraCharacter = .alpha {
         didSet {
             renderCharacter = selectedCharacter
@@ -59,8 +66,6 @@ final class CameraService: NSObject, ObservableObject {
     nonisolated(unsafe) private var position: AVCaptureDevice.Position = .back
     nonisolated(unsafe) private var lensFactors: [CGFloat] = [1]
     nonisolated(unsafe) private var lensIndex = 0
-    nonisolated(unsafe) private var backCameraDevices: [AVCaptureDevice] = []
-    nonisolated(unsafe) private var backCameraIndex = 0
     nonisolated(unsafe) private var renderCharacter: CameraCharacter = .alpha
     nonisolated(unsafe) private var captureAspectRatio: CGFloat = CameraAspectRatio.standard.portraitRatio
     nonisolated(unsafe) private var captureFormat: CaptureFormatOption = .processed
@@ -76,7 +81,6 @@ final class CameraService: NSObject, ObservableObject {
     private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
     private var previewRotationObservation: NSKeyValueObservation?
     private var timerTask: Task<Void, Never>?
-    private var focusLockTask: Task<Void, Never>?
     private let preferences: AppPreferences
     private var isApplyingSessionDefaults = false
 
@@ -245,82 +249,19 @@ final class CameraService: NSObject, ObservableObject {
         UISelectionFeedbackGenerator().selectionChanged()
     }
 
-    func focus(at normalizedPoint: CGPoint, lock: Bool) {
-        guard let device = cameraInput?.device else { return }
-        focusLockTask?.cancel()
-        focusLocked = false
-        let point = CGPoint(
-            x: position == .front ? 1 - min(1, max(0, normalizedPoint.x)) : min(1, max(0, normalizedPoint.x)),
-            y: min(1, max(0, normalizedPoint.y))
-        )
-        do {
-            try device.lockForConfiguration()
-            if device.isFocusPointOfInterestSupported {
-                device.focusPointOfInterest = point
-            }
-            if device.isFocusModeSupported(.autoFocus) {
-                device.focusMode = .autoFocus
-            }
-            if device.isExposurePointOfInterestSupported {
-                device.exposurePointOfInterest = point
-            }
-            if device.isExposureModeSupported(.continuousAutoExposure) {
-                device.exposureMode = .continuousAutoExposure
-            } else if device.isExposureModeSupported(.autoExpose) {
-                device.exposureMode = .autoExpose
-            }
-            device.unlockForConfiguration()
-        } catch {
-            statusMessage = "Focus isn’t available right now."
-            return
-        }
-
-        guard lock else { return }
-        focusLockTask = Task { @MainActor [weak self, weak device] in
-            try? await Task.sleep(for: .milliseconds(420))
-            guard let self, let device, !Task.isCancelled, self.cameraInput?.device === device else { return }
-            do {
-                try device.lockForConfiguration()
-                if device.isFocusModeSupported(.locked) { device.focusMode = .locked }
-                if device.isExposureModeSupported(.locked) { device.exposureMode = .locked }
-                device.unlockForConfiguration()
-                self.focusLocked = true
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            } catch {
-                self.statusMessage = "Focus lock isn’t available right now."
-            }
-        }
-    }
-
-    func adjustExposure(by delta: Double) {
-        setExposure(exposure + delta)
-    }
-
-    func cycleLens() {
-        guard let device = cameraInput?.device else { return }
-        if position == .back,
-           backCameraDevices.count > 1,
-           backCameraDevices.contains(where: { $0.uniqueID == device.uniqueID }) {
-            let nextIndex = (backCameraIndex + 1) % backCameraDevices.count
-            let nextDevice = backCameraDevices[nextIndex]
-            sessionQueue.async { [weak self] in
-                self?.replaceCameraInput(with: nextDevice)
-            }
-            UISelectionFeedbackGenerator().selectionChanged()
-            return
-        }
-
-        guard lensFactors.count > 1 else { return }
-        let current = device.videoZoomFactor
-        lensIndex = lensFactors.firstIndex(where: { $0 > current + 0.01 }) ?? 0
-        let factor = lensFactors[lensIndex]
+    func selectLens(_ option: CameraLensOption) {
+        guard let device = cameraInput?.device,
+              let factor = lensFactors.min(by: {
+                  abs(Double($0) - option.factor) < abs(Double($1) - option.factor)
+              }) else { return }
         setDeviceZoom(factor, on: device)
         UISelectionFeedbackGenerator().selectionChanged()
     }
 
-    func changeZoom(by scale: CGFloat) {
-        guard scale.isFinite, scale > 0, let device = cameraInput?.device else { return }
-        setDeviceZoom(device.videoZoomFactor * scale, on: device)
+    func selectNextLens() {
+        guard !lensOptions.isEmpty else { return }
+        let currentIndex = lensOptions.firstIndex(where: { $0.label == lensLabel }) ?? 0
+        selectLens(lensOptions[(currentIndex + 1) % lensOptions.count])
     }
 
     func setExposure(_ value: Double) {
@@ -334,7 +275,7 @@ final class CameraService: NSObject, ObservableObject {
             device.setExposureTargetBias(Float(exposure))
             device.unlockForConfiguration()
         } catch {
-            statusMessage = "Exposure adjustment isn’t available."
+            statusMessage = L10n.string("Exposure adjustment isn’t available.")
         }
     }
 
@@ -375,7 +316,7 @@ final class CameraService: NSObject, ObservableObject {
         PHPhotoLibrary.requestAuthorization(for: .addOnly) { [weak self] status in
             guard let service = self else { return }
             guard status == .authorized || status == .limited else {
-                Task { @MainActor in service.statusMessage = "Allow photo access in Settings to save." }
+                Task { @MainActor in service.statusMessage = L10n.string("Allow photo access in Settings to save.") }
                 return
             }
             PHPhotoLibrary.shared().performChanges {
@@ -388,7 +329,9 @@ final class CameraService: NSObject, ObservableObject {
                 }
             } completionHandler: { success, _ in
                 Task { @MainActor in
-                    service.statusMessage = success ? "Saved to Photos" : "Couldn’t save this photo."
+                    service.statusMessage = success
+                        ? L10n.string("Saved to Photos")
+                        : L10n.string("Couldn’t save this photo.")
                     if success { UINotificationFeedbackGenerator().notificationOccurred(.success) }
                 }
             }
@@ -422,7 +365,6 @@ final class CameraService: NSObject, ObservableObject {
             session.addInput(input)
             cameraInput = input
             selectHighestResolutionPhotoFormat(for: device)
-            updateBackCameraDevices(selected: device)
 
             videoOutput.alwaysDiscardsLateVideoFrames = true
             let preferredPixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
@@ -444,7 +386,7 @@ final class CameraService: NSObject, ObservableObject {
         } catch {
             Task { @MainActor in
                 self.authorizationState = .unavailable
-                self.statusMessage = "Hibiscus couldn’t start the camera."
+                self.statusMessage = L10n.string("Hibiscus couldn’t start the camera.")
             }
         }
     }
@@ -463,13 +405,12 @@ final class CameraService: NSObject, ObservableObject {
                 session.addInput(newInput)
                 cameraInput = newInput
                 selectHighestResolutionPhotoFormat(for: device)
-                updateBackCameraDevices(selected: device)
                 updateMaximumPhotoDimensions(for: device)
                 configureVideoConnectionFallback(for: device)
                 updateDeviceState(device)
             }
         } catch {
-            Task { @MainActor in self.statusMessage = "Couldn’t switch cameras."
+            Task { @MainActor in self.statusMessage = L10n.string("Couldn’t switch cameras.")
             }
         }
         session.commitConfiguration()
@@ -597,7 +538,7 @@ final class CameraService: NSObject, ObservableObject {
 
     nonisolated private func preferredDevice(position: AVCaptureDevice.Position) -> AVCaptureDevice? {
         let types: [AVCaptureDevice.DeviceType] = position == .back
-            ? [.builtInWideAngleCamera, .builtInTripleCamera, .builtInDualWideCamera, .builtInDualCamera]
+            ? [.builtInTripleCamera, .builtInDualWideCamera, .builtInDualCamera, .builtInWideAngleCamera]
             : [.builtInWideAngleCamera, .builtInTrueDepthCamera]
         for type in types {
             if let device = AVCaptureDevice.DiscoverySession(
@@ -651,32 +592,6 @@ final class CameraService: NSObject, ObservableObject {
         }
     }
 
-    nonisolated private func updateBackCameraDevices(selected device: AVCaptureDevice) {
-        guard device.position == .back else {
-            backCameraDevices = []
-            backCameraIndex = 0
-            return
-        }
-        let types: [AVCaptureDevice.DeviceType] = [
-            .builtInUltraWideCamera,
-            .builtInWideAngleCamera,
-            .builtInTelephotoCamera
-        ]
-        let rank: [AVCaptureDevice.DeviceType: Int] = [
-            .builtInUltraWideCamera: 0,
-            .builtInWideAngleCamera: 1,
-            .builtInTelephotoCamera: 2
-        ]
-        backCameraDevices = AVCaptureDevice.DiscoverySession(
-            deviceTypes: types,
-            mediaType: .video,
-            position: .back
-        ).devices.sorted {
-            rank[$0.deviceType, default: 1] < rank[$1.deviceType, default: 1]
-        }
-        backCameraIndex = backCameraDevices.firstIndex(where: { $0.uniqueID == device.uniqueID }) ?? 0
-    }
-
     nonisolated private func updateDeviceState(_ device: AVCaptureDevice) {
         let multiplier = displayZoomMultiplier(for: device)
         let minimum = device.minAvailableVideoZoomFactor
@@ -698,23 +613,37 @@ final class CameraService: NSObject, ObservableObject {
         let selectedFactor = factors[lensIndex]
         do {
             try device.lockForConfiguration()
+            if device.isFocusModeSupported(.continuousAutoFocus) {
+                device.focusMode = .continuousAutoFocus
+            } else if device.isFocusModeSupported(.autoFocus) {
+                device.focusMode = .autoFocus
+            }
+            if device.isSmoothAutoFocusSupported {
+                device.isSmoothAutoFocusEnabled = true
+            }
+            if device.isExposureModeSupported(.continuousAutoExposure) {
+                device.exposureMode = .continuousAutoExposure
+            } else if device.isExposureModeSupported(.autoExpose) {
+                device.exposureMode = .autoExpose
+            }
+            device.isSubjectAreaChangeMonitoringEnabled = true
             device.videoZoomFactor = selectedFactor
             device.unlockForConfiguration()
         } catch { }
         let displayValue = Double(selectedFactor * multiplier)
-        let isPhysicalBackCamera = device.position == .back && [
-            AVCaptureDevice.DeviceType.builtInUltraWideCamera,
-            .builtInWideAngleCamera,
-            .builtInTelephotoCamera
-        ].contains(device.deviceType)
-        let selectedLabel = isPhysicalBackCamera
-            ? physicalLensLabel(for: device)
-            : formatLens(CGFloat(displayValue))
+        let selectedLabel = formatLens(CGFloat(displayValue))
+        var options: [CameraLensOption] = []
+        for factor in factors {
+            let label = formatLens(factor * multiplier)
+            guard !options.contains(where: { $0.label == label }) else { continue }
+            options.append(CameraLensOption(factor: Double(factor), label: label))
+        }
+        let publishedOptions = options
         Task { @MainActor in
             self.flashAvailable = device.hasFlash && device.position == .back
             self.lensLabel = selectedLabel
+            self.lensOptions = publishedOptions
             self.setExposure(self.preferences.rememberExposure ? self.preferences.lastExposure : 0)
-            self.focusLocked = false
         }
     }
 
@@ -731,28 +660,15 @@ final class CameraService: NSObject, ObservableObject {
                 abs($0.element - factor) < abs($1.element - factor)
             })?.offset ?? 0
         } catch {
-            statusMessage = "Zoom isn’t available right now."
+            statusMessage = L10n.string("Zoom isn’t available right now.")
         }
-    }
-
-    nonisolated private func physicalLensLabel(for device: AVCaptureDevice) -> String {
-        guard let wide = backCameraDevices.first(where: { $0.deviceType == .builtInWideAngleCamera }) else {
-            return device.deviceType == .builtInUltraWideCamera ? "0.5×" : "1×"
-        }
-        let wideFOV = CGFloat(wide.activeFormat.videoFieldOfView)
-        let deviceFOV = CGFloat(device.activeFormat.videoFieldOfView)
-        guard wideFOV > 0, deviceFOV > 0 else { return "1×" }
-        let radians = CGFloat.pi / 360
-        let factor = tan(wideFOV * radians) / tan(deviceFOV * radians)
-        let rounded = max(0.5, (factor * 2).rounded() / 2)
-        return formatLens(rounded)
     }
 
     nonisolated private func displayZoomMultiplier(for device: AVCaptureDevice) -> CGFloat {
         if #available(iOS 18.0, *) {
             return max(0.01, device.displayVideoZoomFactorMultiplier)
         }
-        return 1
+        return device.constituentDevices.contains(where: { $0.deviceType == .builtInUltraWideCamera }) ? 0.5 : 1
     }
 
     private func startSessionOnly() {
@@ -837,7 +753,7 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
             self.isCapturing = false
             guard error == nil, let processed else {
                 self.isProcessingCapture = false
-                self.statusMessage = "Couldn’t capture this photo."
+                self.statusMessage = L10n.string("Couldn’t capture this photo.")
                 return
             }
             self.capturedImage = processed

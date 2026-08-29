@@ -20,6 +20,10 @@ struct GradeView: View {
     @State private var pendingSharePhotoIDs: Set<UUID> = []
     @State private var exportedPhotoIDs: Set<UUID> = []
     @State private var showsCompletionPrompt = false
+    @State private var pendingCompletionFlowID: UUID?
+    @State private var presentingCompletionFlowID: UUID?
+    @State private var postExportDiscoveryRequest: PostExportDiscoveryRequest?
+    @State private var postExportDiscoveryOpenedEcosystem = false
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -163,15 +167,28 @@ struct GradeView: View {
                     set: store.setCustomAccent
                 ),
                 isAutomatic: !store.isAccentCustomized,
-                canApplyToAll: store.batchCount > 1 && store.isAccentCustomized,
-                onUseAutomatic: store.useAutomaticAccent,
-                onApplyToAll: store.applyCustomAccentToAll
+                onUseAutomatic: store.useAutomaticAccent
             )
         }
+        .sheet(item: $postExportDiscoveryRequest, onDismiss: {
+            if !postExportDiscoveryOpenedEcosystem {
+                preferences.recordExploreMoreDismissal()
+            }
+            postExportDiscoveryOpenedEcosystem = false
+            presentingCompletionFlowID = nil
+        }) { _ in
+            PostExportDiscoveryView {
+                guard !postExportDiscoveryOpenedEcosystem else { return }
+                postExportDiscoveryOpenedEcosystem = true
+                preferences.recordExploreMoreEcosystemOpen()
+            }
+        }
         .alert("Continue Editing?", isPresented: $showsCompletionPrompt) {
-            Button("Continue Editing", role: .cancel) {}
+            Button("Continue Editing", role: .cancel) {
+                completeExportFlow(done: false)
+            }
             Button("Done", role: .destructive) {
-                store.removeAllPhotos()
+                completeExportFlow(done: true)
             }
         } message: {
             Text("Your export is complete. Keep this temporary Grade session open?")
@@ -297,7 +314,7 @@ struct GradeView: View {
 
             VStack(spacing: 5) {
                 HStack {
-                    Text(store.activeSurface == .style ? "Style Strength" : "Accent Strength")
+                    Text(LocalizedStringKey(store.activeSurface == .style ? "Style Strength" : "Accent Strength"))
                         .font(.caption.weight(.semibold))
                     Spacer()
                     Text("\(Int(currentStrength * 100))")
@@ -330,21 +347,23 @@ struct GradeView: View {
             )
             .frame(width: size, height: size)
 
-            HStack(spacing: 6) {
-                Text(kind == .style ? store.settings.style.rawValue : "Accent")
+            ZStack {
+                Text(LocalizedStringKey(kind == .style ? store.settings.style.rawValue : "Accent"))
                     .font(.caption.weight(.medium))
+                    .frame(maxWidth: .infinity)
                 if kind == .accent {
                     Button {
                         showsAccentPicker = true
                     } label: {
                         Circle()
                             .fill(store.settings.accent.color)
-                            .frame(width: 22, height: 22)
+                            .frame(width: 13, height: 13)
                             .overlay { Circle().stroke(.primary.opacity(0.24), lineWidth: 0.5) }
                     }
                     .buttonStyle(.plain)
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
+                    .offset(x: 34)
                     .accessibilityLabel("Select Accent color")
                 }
             }
@@ -456,7 +475,11 @@ struct GradeView: View {
             Button(role: .destructive) {
                 store.removePhoto()
             } label: {
-                Label(store.batchCount > 1 ? "Remove Current" : "Remove", systemImage: "trash")
+                Label {
+                    Text(LocalizedStringKey(store.batchCount > 1 ? "Remove Current" : "Remove"))
+                } icon: {
+                    Image(systemName: "trash")
+                }
             }
 
             if store.batchCount > 1 {
@@ -483,15 +506,28 @@ struct GradeView: View {
                 Button {
                     requestExport(format: format, batch: batch, shares: shares)
                 } label: {
-                    Label(format.rawValue, systemImage: format.systemImage)
+                    Label {
+                        Text(LocalizedStringKey(format.rawValue))
+                    } icon: {
+                        Image(systemName: format.systemImage)
+                    }
                 }
             }
         } label: {
-            let action = shares ? "Share" : "Export"
-            Label(
-                batch ? "\(action) All" : "\(action) Current",
-                systemImage: shares ? "square.and.arrow.up" : "square.and.arrow.down"
-            )
+            Label {
+                Text(LocalizedStringKey(exportActionTitle(batch: batch, shares: shares)))
+            } icon: {
+                Image(systemName: shares ? "square.and.arrow.up" : "square.and.arrow.down")
+            }
+        }
+    }
+
+    private func exportActionTitle(batch: Bool, shares: Bool) -> String {
+        switch (batch, shares) {
+        case (false, false): "Export Current"
+        case (false, true): "Share Current"
+        case (true, false): "Export All"
+        case (true, true): "Share All"
         }
     }
 
@@ -525,7 +561,7 @@ struct GradeView: View {
                 paletteComposition: paletteComposition
             )
             guard !files.isEmpty else {
-                store.statusMessage = "Couldn’t render this export."
+                store.statusMessage = L10n.string("Couldn’t render this export.")
                 return
             }
             let completedPhotoIDs = files.count == requestedPhotoIDs.count
@@ -550,7 +586,34 @@ struct GradeView: View {
         guard !sessionPhotoIDs.isEmpty else { return }
         exportedPhotoIDs.formUnion(photoIDs)
         exportedPhotoIDs.formIntersection(sessionPhotoIDs)
-        showsCompletionPrompt = sessionPhotoIDs.isSubset(of: exportedPhotoIDs)
+        guard sessionPhotoIDs.isSubset(of: exportedPhotoIDs),
+              pendingCompletionFlowID == nil,
+              presentingCompletionFlowID == nil,
+              postExportDiscoveryRequest == nil else { return }
+        pendingCompletionFlowID = UUID()
+        showsCompletionPrompt = true
+    }
+
+    private func completeExportFlow(done: Bool) {
+        guard let flowID = pendingCompletionFlowID else { return }
+        pendingCompletionFlowID = nil
+        presentingCompletionFlowID = flowID
+        showsCompletionPrompt = false
+        if done {
+            // Cleanup belongs to the Done decision only. Discovery dismissal
+            // must never run it a second time.
+            store.removeAllPhotos()
+            exportedPhotoIDs = []
+        }
+        guard preferences.shouldPresentExploreMoreAfterExport() else {
+            presentingCompletionFlowID = nil
+            return
+        }
+        postExportDiscoveryOpenedEcosystem = false
+        Task { @MainActor in
+            await Task.yield()
+            postExportDiscoveryRequest = PostExportDiscoveryRequest(id: flowID)
+        }
     }
 
     private var currentStrength: Double {
@@ -581,7 +644,7 @@ struct GradeView: View {
         .frame(width: max(48, CGFloat(store.batchCount) * 13), height: 28)
         .hibiscusGlass(tint: .black.opacity(0.24), in: Capsule())
         .accessibilityLabel("Photo selector")
-        .accessibilityValue("Photo \(store.currentIndex + 1) of \(store.batchCount)")
+        .accessibilityValue(L10n.format("Photo %lld of %lld", Int64(store.currentIndex + 1), Int64(store.batchCount)))
     }
 
     private var photoPagingGesture: some Gesture {
@@ -643,7 +706,7 @@ struct GradeView: View {
         }
         await MainActor.run {
             if imports.isEmpty {
-                store.statusMessage = "These photos couldn’t be opened."
+                store.statusMessage = L10n.string("These photos couldn’t be opened.")
             } else {
                 store.loadBatch(imports, preferredStyle: pendingStyle, replacing: pickerReplacesSession)
             }
@@ -665,13 +728,15 @@ private struct PaletteExportRequest: Identifiable {
     let shares: Bool
 }
 
+private struct PostExportDiscoveryRequest: Identifiable {
+    let id: UUID
+}
+
 private struct AccentColorPickerSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Binding var color: Color
     let isAutomatic: Bool
-    let canApplyToAll: Bool
     let onUseAutomatic: () -> Void
-    let onApplyToAll: () -> Void
 
     @State private var hue: Double
     @State private var saturation: Double
@@ -680,15 +745,11 @@ private struct AccentColorPickerSheet: View {
     init(
         color: Binding<Color>,
         isAutomatic: Bool,
-        canApplyToAll: Bool,
-        onUseAutomatic: @escaping () -> Void,
-        onApplyToAll: @escaping () -> Void
+        onUseAutomatic: @escaping () -> Void
     ) {
         _color = color
         self.isAutomatic = isAutomatic
-        self.canApplyToAll = canApplyToAll
         self.onUseAutomatic = onUseAutomatic
-        self.onApplyToAll = onApplyToAll
 
         var hue: CGFloat = 0
         var saturation: CGFloat = 0
@@ -750,11 +811,6 @@ private struct AccentColorPickerSheet: View {
                     .frame(maxWidth: .infinity)
                 }
                 .hibiscusGlassButtonStyle()
-
-                if canApplyToAll {
-                    Button("Apply Custom Accent to All", action: onApplyToAll)
-                        .hibiscusGlassButtonStyle()
-                }
 
                 Spacer()
             }
@@ -834,8 +890,8 @@ private struct ComposerPageDots: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Photo \(index + 1)")
-                .accessibilityValue(index == selection ? "Selected" : "Not selected")
+                .accessibilityLabel(L10n.format("Photo %lld", Int64(index + 1)))
+                .accessibilityValue(L10n.string(index == selection ? "Selected" : "Not selected"))
             }
         }
         .frame(minWidth: 52)
@@ -846,7 +902,7 @@ private struct ComposerPageDots: View {
         .contentShape(Rectangle())
         .modifier(ComposerPageSwipeModifier(count: count, selection: $selection))
         .accessibilityLabel("Export photo selector")
-        .accessibilityValue("Photo \(selection + 1) of \(count)")
+        .accessibilityValue(L10n.format("Photo %lld of %lld", Int64(selection + 1), Int64(count)))
     }
 }
 
@@ -939,8 +995,8 @@ private struct PaletteComposerSheet: View {
                                         .frame(width: 48, height: 48)
                                 }
                                 .buttonStyle(.plain)
-                                .accessibilityLabel("Color \(index + 1)")
-                                .accessibilityValue(selectedIndices.contains(index) ? "Selected" : "Not selected")
+                                .accessibilityLabel(L10n.format("Color %lld", Int64(index + 1)))
+                                .accessibilityValue(L10n.string(selectedIndices.contains(index) ? "Selected" : "Not selected"))
                             }
                         }
                         .padding(.horizontal, 1)
@@ -982,10 +1038,11 @@ private struct PaletteComposerSheet: View {
                     onComplete(composition)
                     dismiss()
                 } label: {
-                    Label(
-                        primaryActionShares ? "Share" : "Export to Photos",
-                        systemImage: primaryActionShares ? "square.and.arrow.up" : "square.and.arrow.down"
-                    )
+                    Label {
+                        Text(LocalizedStringKey(primaryActionShares ? "Share" : "Export to Photos"))
+                    } icon: {
+                        Image(systemName: primaryActionShares ? "square.and.arrow.up" : "square.and.arrow.down")
+                    }
                     .frame(maxWidth: .infinity)
                 }
                 .frame(maxWidth: 420)
@@ -1107,14 +1164,14 @@ private struct PaletteComposerSheet: View {
     private func toggleColor(at index: Int) {
         if selectedIndices.contains(index) {
             guard selectedIndices.count > 1 else {
-                selectionMessage = "Keep at least one color."
+                selectionMessage = L10n.string("Keep at least one color.")
                 UINotificationFeedbackGenerator().notificationOccurred(.warning)
                 return
             }
             selectedIndices.remove(index)
         } else {
             guard selectedIndices.count < 5 else {
-                selectionMessage = "A Palette can contain up to five colors."
+                selectionMessage = L10n.string("A Palette can contain up to five colors.")
                 UINotificationFeedbackGenerator().notificationOccurred(.warning)
                 return
             }
@@ -1141,6 +1198,7 @@ private struct PaletteComposerSheet: View {
 
 private struct PolaroidComposerSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.locale) private var locale
     let photos: [GradeSessionPhoto]
     let primaryActionShares: Bool
     let showsMetadata: Bool
@@ -1196,10 +1254,11 @@ private struct PolaroidComposerSheet: View {
                     onComplete(composition)
                     dismiss()
                 } label: {
-                    Label(
-                        primaryActionShares ? "Share" : "Export to Photos",
-                        systemImage: primaryActionShares ? "square.and.arrow.up" : "square.and.arrow.down"
-                    )
+                    Label {
+                        Text(LocalizedStringKey(primaryActionShares ? "Share" : "Export to Photos"))
+                    } icon: {
+                        Image(systemName: primaryActionShares ? "square.and.arrow.up" : "square.and.arrow.down")
+                    }
                     .frame(maxWidth: .infinity)
                 }
                 .frame(maxWidth: 380)
@@ -1229,7 +1288,7 @@ private struct PolaroidComposerSheet: View {
                         Image(systemName: mode == .draw ? "checkmark" : "pencil.tip")
                     }
                     .tint(mode == .draw ? .primary : .secondary)
-                    .accessibilityLabel(mode == .draw ? "Finish drawing" : "Draw with PencilKit")
+                    .accessibilityLabel(L10n.string(mode == .draw ? "Finish drawing" : "Draw with PencilKit"))
 
                     if mode == .crop, cropScale != 1 || cropOffset != .zero {
                         Button {
@@ -1401,11 +1460,11 @@ private struct PolaroidComposerSheet: View {
     private var composerHint: String {
         switch mode {
         case .crop:
-            "Drag and pinch the photo to choose its crop."
+            L10n.string("Drag and pinch the photo to choose its crop.")
         case .draw:
             exportCount > 1
-                ? "Draw anywhere. The same drawing is added to all \(exportCount) cards."
-                : "Use the system PencilKit tools to draw anywhere on the card."
+                ? L10n.format("Draw anywhere. The same drawing is added to all %lld cards.", Int64(exportCount))
+                : L10n.string("Use the system PencilKit tools to draw anywhere on the card.")
         }
     }
 
@@ -1413,12 +1472,13 @@ private struct PolaroidComposerSheet: View {
         var lines: [String] = []
         if let date = metadata.date {
             let formatter = DateFormatter()
-            formatter.locale = Locale(identifier: "en_US_POSIX")
-            formatter.dateFormat = "MMM d yyyy · HH:mm"
+            formatter.locale = locale
+            formatter.dateStyle = .medium
+            formatter.timeStyle = .short
             lines.append(formatter.string(from: date).uppercased())
         }
         if includesLocation, let location = metadata.location { lines.append(location.uppercased()) }
-        let camera = metadata.cameraCharacter.map { "\($0.glyph) \($0.name.uppercased()) · " } ?? ""
+        let camera = metadata.cameraCharacter.map { "\($0.symbol) \($0.name.uppercased()) · " } ?? ""
         lines.append("\(camera)\(settings.style.rawValue.uppercased())")
         return Array(lines.prefix(3))
     }

@@ -129,7 +129,9 @@ final class GradeStore: ObservableObject {
     ) {
         let accepted = Array(imports.prefix(max(0, 10 - (replacing ? 0 : photos.count))))
         guard !accepted.isEmpty else {
-            statusMessage = photos.count >= 10 ? "You can edit up to 10 photos at once." : "No photos were imported."
+            statusMessage = photos.count >= 10
+                ? L10n.string("You can edit up to 10 photos at once.")
+                : L10n.string("No photos were imported.")
             return
         }
 
@@ -191,11 +193,19 @@ final class GradeStore: ObservableObject {
             return
         }
         recordUndo()
+        let preservedAccent = settings.accent
+        let preservedAccentPoint = settings.accentPoint
+        let preservedAccentStrength = settings.accentStrength
+        let preservedAccentCustomization = isAccentCustomized
         syncCurrentPhoto()
         let session = photos[currentIndex].styleSessions[style]
             ?? Self.defaultStyleSession(style: style, automaticAccent: automaticAccent)
-        settings = session.settings
-        isAccentCustomized = session.isAccentCustomized
+        var nextSettings = session.settings
+        nextSettings.accent = preservedAccent
+        nextSettings.accentPoint = preservedAccentPoint
+        nextSettings.accentStrength = preservedAccentStrength
+        settings = nextSettings
+        isAccentCustomized = preservedAccentCustomization
         if sourceImage != nil { isStyleRailExpanded = false }
         activeSurface = .style
         preferences.lastGradeStyle = style
@@ -208,35 +218,17 @@ final class GradeStore: ObservableObject {
         guard photos.count > 1 else { return }
         syncCurrentPhoto()
         for index in photos.indices where index != currentIndex {
-            var session = photos[index].styleSessions[settings.style]
-                ?? Self.defaultStyleSession(
-                    style: settings.style,
-                    automaticAccent: photos[index].automaticAccent
-                )
-            session.settings.stylePoint = settings.stylePoint
-            session.settings.styleStrength = settings.styleStrength
-            photos[index].styleSessions[settings.style] = session
-            photos[index].settings = session.settings
-            photos[index].isAccentCustomized = session.isAccentCustomized
-        }
-        statusMessage = "Applied \(settings.style.rawValue) to all photos"
-        UINotificationFeedbackGenerator().notificationOccurred(.success)
-    }
-
-    func applyCustomAccentToAll() {
-        guard photos.count > 1, isAccentCustomized else { return }
-        syncCurrentPhoto()
-        for index in photos.indices where index != currentIndex {
-            photos[index].settings.accent = settings.accent
-            photos[index].settings.accentPoint = settings.accentPoint
-            photos[index].settings.accentStrength = settings.accentStrength
-            photos[index].isAccentCustomized = true
-            photos[index].styleSessions[photos[index].settings.style] = GradeStyleSession(
-                settings: photos[index].settings,
-                isAccentCustomized: true
+            var targetSettings = photos[index].settings
+            targetSettings.style = settings.style
+            targetSettings.stylePoint = settings.stylePoint
+            targetSettings.styleStrength = settings.styleStrength
+            photos[index].settings = targetSettings
+            photos[index].styleSessions[settings.style] = GradeStyleSession(
+                settings: targetSettings,
+                isAccentCustomized: photos[index].isAccentCustomized
             )
         }
-        statusMessage = "Applied the custom Accent to all photos"
+        statusMessage = L10n.format("Applied %@ to all photos", settings.style.rawValue)
         UINotificationFeedbackGenerator().notificationOccurred(.success)
     }
 
@@ -499,7 +491,7 @@ final class GradeStore: ObservableObject {
                 paletteComposition: paletteComposition
             )
             guard !images.isEmpty else {
-                statusMessage = "Couldn’t render this export."
+                statusMessage = L10n.string("Couldn’t render this export.")
                 return
             }
             saveToPhotos(images)
@@ -509,7 +501,7 @@ final class GradeStore: ObservableObject {
     func save() {
         Task {
             guard let image = await exportImage() else {
-                statusMessage = "Couldn’t render this photo."
+                statusMessage = L10n.string("Couldn’t render this photo.")
                 return
             }
             saveToPhotos([image])
@@ -521,7 +513,7 @@ final class GradeStore: ObservableObject {
         PHPhotoLibrary.requestAuthorization(for: .addOnly) { [weak self] status in
             guard let store = self else { return }
             guard status == .authorized || status == .limited else {
-                Task { @MainActor in store.statusMessage = "Allow photo access in Settings to save." }
+                Task { @MainActor in store.statusMessage = L10n.string("Allow photo access in Settings to save.") }
                 return
             }
             PHPhotoLibrary.shared().performChanges {
@@ -531,8 +523,10 @@ final class GradeStore: ObservableObject {
             } completionHandler: { success, _ in
                 Task { @MainActor in
                     store.statusMessage = success
-                        ? (images.count == 1 ? "Saved to Photos" : "Saved \(images.count) photos")
-                        : "Couldn’t save these photos."
+                        ? (images.count == 1
+                            ? L10n.string("Saved to Photos")
+                            : L10n.format("Saved %lld photos", Int64(images.count)))
+                        : L10n.string("Couldn’t save these photos.")
                     if success { UINotificationFeedbackGenerator().notificationOccurred(.success) }
                 }
             }
@@ -552,7 +546,7 @@ final class GradeStore: ObservableObject {
             guard status == .authorized || status == .limited else {
                 store.cleanExportFiles(urls)
                 Task { @MainActor in
-                    store.statusMessage = "Allow photo access in Settings to save."
+                    store.statusMessage = L10n.string("Allow photo access in Settings to save.")
                     completion(false)
                 }
                 return
@@ -566,8 +560,10 @@ final class GradeStore: ObservableObject {
                 store.cleanExportFiles(urls)
                 Task { @MainActor in
                     store.statusMessage = success
-                        ? (urls.count == 1 ? "Saved to Photos" : "Saved \(urls.count) photos")
-                        : "Couldn’t save these photos."
+                        ? (urls.count == 1
+                            ? L10n.string("Saved to Photos")
+                            : L10n.format("Saved %lld photos", Int64(urls.count)))
+                        : L10n.string("Couldn’t save these photos.")
                     if success { UINotificationFeedbackGenerator().notificationOccurred(.success) }
                     completion(success)
                 }
