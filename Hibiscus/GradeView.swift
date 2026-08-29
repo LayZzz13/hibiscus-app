@@ -87,6 +87,7 @@ struct GradeView: View {
                     .frame(maxHeight: .infinity, alignment: .center)
             }
         }
+        .tint(.white)
         .photosPicker(
             isPresented: $showsPicker,
             selection: $pickerItems,

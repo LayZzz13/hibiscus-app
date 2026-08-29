@@ -48,6 +48,7 @@ struct CameraView: View {
                     .onTapGesture { camera.statusMessage = nil }
             }
         }
+        .tint(.white)
         .onAppear {
             UIDevice.current.beginGeneratingDeviceOrientationNotifications()
             updateCameraControlRotation(UIDevice.current.orientation)
