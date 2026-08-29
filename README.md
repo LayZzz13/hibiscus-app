@@ -1,6 +1,10 @@
-# 🌺 Hibiscus
+<p align="center">
+  <img src="docs/assets/hibiscus-app-icon.png" alt="Hibiscus app icon" width="180">
+</p>
 
-**Color by feel.**
+<h1 align="center">🌺 Hibiscus</h1>
+
+<p align="center"><strong>Color by feel.</strong></p>
 
 Hibiscus is a free and open-source native iPhone camera and color-grading app built with SwiftUI, AVFoundation, Core Image, Vision, and Metal-backed previews.
 

@@ -106,6 +106,7 @@ final class CameraService: NSObject, ObservableObject {
     }
 
     func start() {
+        previewRenderer.resume()
         isApplyingSessionDefaults = true
         selectedCharacter = preferences.defaultCamera == .lastUsed
             ? preferences.lastCameraCharacter
@@ -176,6 +177,9 @@ final class CameraService: NSObject, ObservableObject {
     }
 
     private func captureNow() {
+        // Lock the most recently presented Metal frame at shutter time. Still-photo
+        // processing can then continue without the viewfinder drifting afterward.
+        previewRenderer.freeze()
         isCapturing = true
         isProcessingCapture = true
         capturedDate = Date()
@@ -230,6 +234,7 @@ final class CameraService: NSObject, ObservableObject {
     }
 
     func retake() {
+        previewRenderer.resume()
         capturedImage = nil
         capturedPreviewImage = nil
         capturedDate = nil
@@ -753,6 +758,7 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
             self.isCapturing = false
             guard error == nil, let processed else {
                 self.isProcessingCapture = false
+                self.previewRenderer.resume()
                 self.statusMessage = L10n.string("Couldn’t capture this photo.")
                 return
             }

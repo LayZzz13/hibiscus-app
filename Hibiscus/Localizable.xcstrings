@@ -61,7 +61,6 @@
       }
     },
     "Accent" : {
-      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -82,12 +81,21 @@
       }
     },
     "Accent Strength" : {
-      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "强调色强度"
+          }
+        }
+      }
+    },
+    "Add Base Picture" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加基准图片"
           }
         }
       }
@@ -179,6 +187,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "自动强调色"
+          }
+        }
+      }
+    },
+    "Base Picture" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "基准图片"
           }
         }
       }
@@ -346,6 +364,36 @@
         }
       }
     },
+    "Couldn’t Create LUT" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法创建 LUT"
+          }
+        }
+      }
+    },
+    "Couldn’t create the LUT." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法创建 LUT。"
+          }
+        }
+      }
+    },
+    "Couldn’t load the Base Picture." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法载入基准图片。"
+          }
+        }
+      }
+    },
     "Couldn’t render this export." : {
       "localizations" : {
         "zh-Hans" : {
@@ -396,6 +444,16 @@
         }
       }
     },
+    "Create LUT" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "创建 LUT"
+          }
+        }
+      }
+    },
     "Cycles through the available lenses" : {
 
     },
@@ -415,6 +473,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "默认相机"
+          }
+        }
+      }
+    },
+    "Developing" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显影中"
           }
         }
       }
@@ -507,6 +575,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "English"
+          }
+        }
+      }
+    },
+    "Explore More" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "探索更多"
           }
         }
       }
@@ -824,6 +902,26 @@
         }
       }
     },
+    "Loading Photo…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在载入照片…"
+          }
+        }
+      }
+    },
+    "LUT Name" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "LUT 名称"
+          }
+        }
+      }
+    },
     "Monochrome" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -862,26 +960,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "同一开发者的更多应用"
-          }
-        }
-      }
-    },
-    "Explore More" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "探索更多"
-          }
-        }
-      }
-    },
-    "Show Discovery Pop-up" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "显示探索弹窗"
           }
         }
       }
@@ -927,6 +1005,16 @@
         }
       }
     },
+    "Occasionally show more projects after exporting." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "导出后偶尔展示更多项目。"
+          }
+        }
+      }
+    },
     "Off" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -938,12 +1026,12 @@
         }
       }
     },
-    "Occasionally show more projects after exporting." : {
+    "OK" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "导出后偶尔展示更多项目。"
+            "value" : "确定"
           }
         }
       }
@@ -1222,6 +1310,16 @@
         }
       }
     },
+    "Replace Base Picture" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "替换基准图片"
+          }
+        }
+      }
+    },
     "Reset crop" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1292,6 +1390,16 @@
         }
       }
     },
+    "Select a Base Picture to begin." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请选择一张基准图片以开始。"
+          }
+        }
+      }
+    },
     "Select Accent color" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1355,6 +1463,16 @@
         }
       }
     },
+    "Show Discovery Pop-up" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示探索弹窗"
+          }
+        }
+      }
+    },
     "Show hex codes" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1376,8 +1494,17 @@
         }
       }
     },
+    "Style" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "风格"
+          }
+        }
+      }
+    },
     "Style Strength" : {
-      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -1544,6 +1671,46 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "当前无法变焦。"
+          }
+        }
+      }
+    },
+    "Back" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "返回"
+          }
+        }
+      }
+    },
+    "Keep Configuration" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保留配置"
+          }
+        }
+      }
+    },
+    "Keep LUT Configuration?" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保留当前 LUT 配置？"
+          }
+        }
+      }
+    },
+    "Your Base Picture and LUT configuration are temporary. Keep editing or finish and discard them." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "基准图片和 LUT 配置仅临时保留。继续编辑，或完成并丢弃它们。"
           }
         }
       }

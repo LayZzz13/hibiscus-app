@@ -49,7 +49,7 @@ struct ContentView: View {
                     }
                 }
         }
-        .tint(.white)
+        .tint(.hibiscusAccent)
         .preferredColorScheme(.dark)
     }
 }

@@ -732,7 +732,7 @@ private struct PostExportDiscoveryRequest: Identifiable {
     let id: UUID
 }
 
-private struct AccentColorPickerSheet: View {
+struct AccentColorPickerSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Binding var color: Color
     let isAutomatic: Bool
@@ -838,7 +838,7 @@ private struct AccentColorPickerSheet: View {
     }
 }
 
-private struct AccentHueStrip: View {
+struct AccentHueStrip: View {
     @Binding var hue: Double
     let onChange: () -> Void
 

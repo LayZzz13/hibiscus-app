@@ -53,6 +53,63 @@ nonisolated enum ImageRenderer {
         return dissolve(mixedStyle, accented, amount: settings.accentStrength)
     }
 
+    /// Evaluates the same global color graph used by Grade over an RGB lattice.
+    /// The lattice deliberately contains no photograph data, so the result can be
+    /// serialized as a fixed 3D LUT without baking in spatial or analysis effects.
+    static func gradeCubeSamples(settings: GradeSettings, dimension: Int) -> [SIMD3<Float>] {
+        precondition(dimension > 1)
+        let width = dimension * dimension
+        let height = dimension
+        let componentCount = width * height * 4
+        let denominator = Float(dimension - 1)
+        var inputPixels = [Float](repeating: 0, count: componentCount)
+
+        for blue in 0..<dimension {
+            for green in 0..<dimension {
+                for red in 0..<dimension {
+                    let pixel = (blue * width) + (green * dimension) + red
+                    let component = pixel * 4
+                    inputPixels[component] = Float(red) / denominator
+                    inputPixels[component + 1] = Float(green) / denominator
+                    inputPixels[component + 2] = Float(blue) / denominator
+                    inputPixels[component + 3] = 1
+                }
+            }
+        }
+
+        let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
+        let bytesPerRow = width * 4 * MemoryLayout<Float>.size
+        let inputData = inputPixels.withUnsafeBytes { Data($0) }
+        let lattice = CIImage(
+            bitmapData: inputData,
+            bytesPerRow: bytesPerRow,
+            size: CGSize(width: width, height: height),
+            format: .RGBAf,
+            colorSpace: colorSpace
+        )
+        let output = gradeCIImage(lattice, settings: settings)
+        var outputPixels = [Float](repeating: 0, count: componentCount)
+        outputPixels.withUnsafeMutableBytes { bytes in
+            guard let baseAddress = bytes.baseAddress else { return }
+            context.render(
+                output,
+                toBitmap: baseAddress,
+                rowBytes: bytesPerRow,
+                bounds: CGRect(x: 0, y: 0, width: width, height: height),
+                format: .RGBAf,
+                colorSpace: colorSpace
+            )
+        }
+
+        return stride(from: 0, to: componentCount, by: 4).map { component in
+            SIMD3(
+                outputPixels[component],
+                outputPixels[component + 1],
+                outputPixels[component + 2]
+            )
+        }
+    }
+
     static func sourceCIImage(_ image: UIImage) -> CIImage? {
         normalizedCIImage(image)
     }

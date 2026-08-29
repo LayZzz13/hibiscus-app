@@ -13,6 +13,7 @@ nonisolated final class CameraPreviewRenderer: NSObject, MTKViewDelegate, @unche
     private var frameVersion: UInt64 = 0
     private var submittedVersion: UInt64 = 0
     private var isRendering = false
+    private var isFrozen = false
 
     override init() {
         guard let device = MTLCreateSystemDefaultDevice(),
@@ -40,9 +41,25 @@ nonisolated final class CameraPreviewRenderer: NSObject, MTKViewDelegate, @unche
 
     func submit(_ image: CIImage, character: CameraCharacter) {
         lock.lock()
+        guard !isFrozen else {
+            lock.unlock()
+            return
+        }
         latestImage = image
         latestCharacter = character
         frameVersion &+= 1
+        lock.unlock()
+    }
+
+    func freeze() {
+        lock.lock()
+        isFrozen = true
+        lock.unlock()
+    }
+
+    func resume() {
+        lock.lock()
+        isFrozen = false
         lock.unlock()
     }
 
@@ -58,7 +75,8 @@ nonisolated final class CameraPreviewRenderer: NSObject, MTKViewDelegate, @unche
               view.drawableSize.height > 0 else { return }
 
         lock.lock()
-        guard !isRendering,
+        guard !isFrozen,
+              !isRendering,
               frameVersion != submittedVersion,
               let image = latestImage else {
             lock.unlock()

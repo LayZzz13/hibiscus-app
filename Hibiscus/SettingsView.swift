@@ -51,6 +51,13 @@ struct SettingsView: View {
                     Toggle("Include Location", isOn: $preferences.includeLocation)
                     Toggle("Polaroid Metadata", isOn: $preferences.polaroidMetadata)
                     Toggle("Hibiscus Mark", isOn: $preferences.hibiscusMark)
+
+                    NavigationLink {
+                        CreateLUTView()
+                    } label: {
+                        Label("Create LUT", systemImage: "cube.transparent")
+                            .foregroundStyle(.primary)
+                    }
                 }
 
                 Section("More Apps") {

@@ -1,7 +1,7 @@
 import SwiftUI
 
 extension Color {
-    static let hibiscusAccent = Color(red: 0.925, green: 0.310, blue: 0.420)
+    static let hibiscusAccent = Color(red: 138 / 255, green: 175 / 255, blue: 163 / 255)
 }
 import UIKit
 

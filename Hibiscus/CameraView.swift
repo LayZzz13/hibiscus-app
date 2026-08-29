@@ -8,6 +8,9 @@ struct CameraView: View {
     @State private var isSelectionPanelExpanded = true
     @State private var cameraControlRotation: Angle = .zero
     @State private var cameraControlSide: CGFloat = 0
+    @State private var capturePrintProgress: CGFloat = 0
+    @State private var captureDevelopmentProgress: CGFloat = 1
+    @State private var captureAnimationTask: Task<Void, Never>?
     let isActive: Bool
     let sendToGrade: (UIImage, CameraCharacter, Date?) -> Void
 
@@ -56,7 +59,34 @@ struct CameraView: View {
         .onChange(of: isActive) { _, active in
             active ? camera.start() : camera.stop()
         }
+        .onChange(of: camera.capturedImage != nil) { _, hasCapture in
+            captureAnimationTask?.cancel()
+            guard hasCapture else {
+                capturePrintProgress = 0
+                captureDevelopmentProgress = 1
+                return
+            }
+            capturePrintProgress = 0
+            captureDevelopmentProgress = 0
+            captureAnimationTask = Task { @MainActor in
+                await Task.yield()
+                guard !Task.isCancelled else { return }
+                withAnimation(.timingCurve(0.18, 0.72, 0.20, 1, duration: 1.3)) {
+                    capturePrintProgress = 1
+                }
+                do {
+                    try await Task.sleep(for: .seconds(1.3))
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled else { return }
+                withAnimation(.easeInOut(duration: 0.9)) {
+                    captureDevelopmentProgress = 1
+                }
+            }
+        }
         .onDisappear {
+            captureAnimationTask?.cancel()
             UIDevice.current.endGeneratingDeviceOrientationNotifications()
             camera.stop()
         }
@@ -155,7 +185,7 @@ struct CameraView: View {
         case .authorized:
             CameraMetalPreview(
                 renderer: camera.previewRenderer,
-                isActive: isActive,
+                isActive: isActive && !camera.isCapturing,
                 onPreviewLayerReady: camera.attachPreviewLayer
             )
                 .background(Color(white: 0.025))
@@ -493,22 +523,63 @@ struct CameraView: View {
             let maximumHeight = max(1, proxy.size.height - 170)
             let photoWidth = min(maximumWidth, maximumHeight * imageRatio)
             let photoHeight = photoWidth / imageRatio
+            let resultVerticalOffset: CGFloat = camera.selectedRatio == .widescreen ? -24 : 0
+            let shadowDevelopment = phaseProgress(captureDevelopmentProgress, from: 0, to: 0.42)
+            let midtoneDevelopment = phaseProgress(captureDevelopmentProgress, from: 0.25, to: 0.78)
+            let highlightDevelopment = phaseProgress(captureDevelopmentProgress, from: 0.62, to: 1)
 
             ZStack(alignment: .bottom) {
-                VStack(spacing: 10) {
-                    PhotoFitView(image: displayImage)
-                        .frame(width: photoWidth, height: photoHeight)
-                        .background(.black)
-                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .stroke(.white.opacity(0.10), lineWidth: 0.5)
-                        }
-                        .shadow(color: .black.opacity(0.26), radius: 10, y: 4)
+                ZStack(alignment: .top) {
+                    VStack(spacing: 10) {
+                        ZStack {
+                            // Instant-film development establishes density first,
+                            // followed by midtone color and finally clean highlights.
+                            PhotoFitView(image: displayImage)
+                                .saturation(0.06)
+                                .contrast(0.58)
+                                .brightness(-0.24)
+                                .overlay {
+                                    Color(red: 0.055, green: 0.065, blue: 0.06)
+                                        .opacity(0.28)
+                                }
 
-                    captureMetadata
+                            PhotoFitView(image: displayImage)
+                                .saturation(0.22)
+                                .contrast(1.16)
+                                .blendMode(.multiply)
+                                .opacity(0.78 * shadowDevelopment)
+
+                            PhotoFitView(image: displayImage)
+                                .saturation(0.72)
+                                .contrast(1.04)
+                                .blendMode(.softLight)
+                                .opacity(0.72 * midtoneDevelopment)
+
+                            PhotoFitView(image: displayImage)
+                                .opacity(highlightDevelopment)
+                        }
+                            .frame(width: photoWidth, height: photoHeight)
+                            .background(.black)
+                            .compositingGroup()
+                            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                    .stroke(.white.opacity(0.10), lineWidth: 0.5)
+                            }
+                            .shadow(color: .black.opacity(0.26), radius: 10, y: 4)
+
+                        captureMetadata
+                    }
+                    .mask(alignment: .top) {
+                        Rectangle()
+                            .scaleEffect(y: capturePrintProgress, anchor: .top)
+                    }
+                    .offset(y: -18 * (1 - capturePrintProgress))
+                    .opacity(capturePrintProgress > 0 ? 1 : 0)
                 }
+                .frame(width: maximumWidth, height: photoHeight + 56, alignment: .top)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                .offset(y: resultVerticalOffset)
 
                 HibiscusGlassContainer(spacing: 10) {
                     HStack(spacing: 10) {
@@ -552,7 +623,12 @@ struct CameraView: View {
             Spacer(minLength: 6)
 
             VStack(alignment: .trailing, spacing: 2) {
-                if camera.isProcessingCapture {
+                if capturePrintProgress < 1 || captureDevelopmentProgress < 1 {
+                    HStack(spacing: 4) {
+                        ProgressView().controlSize(.mini)
+                        Text("Developing")
+                    }
+                } else if camera.isProcessingCapture {
                     HStack(spacing: 4) {
                         ProgressView().controlSize(.mini)
                         Text("Finishing")
@@ -582,6 +658,10 @@ struct CameraView: View {
                 .frame(maxWidth: .infinity)
         }
         .hibiscusGlassButtonStyle()
+    }
+
+    private func phaseProgress(_ progress: CGFloat, from start: CGFloat, to end: CGFloat) -> CGFloat {
+        min(1, max(0, (progress - start) / (end - start)))
     }
 
     private func updateCameraControlRotation(_ orientation: UIDeviceOrientation) {
