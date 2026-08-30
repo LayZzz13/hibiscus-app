@@ -4,6 +4,9 @@ import UIKit
 
 struct CreateLUTView: View {
     @Environment(\.dismiss) private var dismiss
+#if DEBUG && targetEnvironment(simulator)
+    private let simulatorDemoPhoto: SimulatorDemoPhoto?
+#endif
     @State private var pickerItem: PhotosPickerItem?
     @State private var basePicture: UIImage?
     @State private var settings = GradeSettings()
@@ -25,6 +28,18 @@ struct CreateLUTView: View {
     @State private var errorMessage: String?
     @State private var showsExitConfirmation = false
     @State private var previewRenderer = GradePreviewRenderer()
+
+    init() {
+#if DEBUG && targetEnvironment(simulator)
+        simulatorDemoPhoto = nil
+#endif
+    }
+
+#if DEBUG && targetEnvironment(simulator)
+    init(simulatorDemoPhoto: SimulatorDemoPhoto?) {
+        self.simulatorDemoPhoto = simulatorDemoPhoto
+    }
+#endif
 
     var body: some View {
         ScrollView {
@@ -71,6 +86,12 @@ struct CreateLUTView: View {
         .onChange(of: pickerItem) { _, newItem in
             guard let newItem else { return }
             Task { await loadBasePicture(from: newItem) }
+        }
+        .task {
+#if DEBUG && targetEnvironment(simulator)
+            guard basePicture == nil, let simulatorDemoPhoto else { return }
+            await loadBasePicture(from: simulatorDemoPhoto)
+#endif
         }
         .onChange(of: settings) { _, newSettings in
             previewRenderer.update(settings: newSettings)
@@ -420,6 +441,44 @@ struct CreateLUTView: View {
             errorMessage = L10n.string("Couldn’t load the Base Picture.")
         }
     }
+
+#if DEBUG && targetEnvironment(simulator)
+    @MainActor
+    private func loadBasePicture(from photo: SimulatorDemoPhoto) async {
+        let generation = UUID()
+        pictureLoadGeneration = generation
+        isLoadingPicture = true
+        isAnalyzingAccent = false
+        defer {
+            if pictureLoadGeneration == generation { isLoadingPicture = false }
+        }
+
+        let image = await Task.detached(priority: .userInitiated) {
+            guard let data = try? Data(contentsOf: photo.resourceURL, options: .mappedIfSafe) else {
+                return nil as UIImage?
+            }
+            return AccentAnalyzer.downsample(data, maxDimension: 2400)
+        }.value
+        guard pictureLoadGeneration == generation else { return }
+        guard let image else {
+            errorMessage = L10n.string("Couldn’t load the Base Picture.")
+            return
+        }
+
+        basePicture = image
+        previewRenderer.load(image, settings: settings)
+        generateThumbnails(from: image)
+        isLoadingPicture = false
+        isAnalyzingAccent = true
+        let accent = await Task.detached(priority: .userInitiated) {
+            AccentAnalyzer.analyze(image)
+        }.value
+        guard pictureLoadGeneration == generation else { return }
+        automaticAccent = accent
+        if !isAccentCustomized { settings.accent = accent }
+        isAnalyzingAccent = false
+    }
+#endif
 
     private func generateThumbnails(from image: UIImage) {
         let generation = UUID()

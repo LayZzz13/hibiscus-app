@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 
 nonisolated enum HibiscusExportFormat: String, CaseIterable, Identifiable, Sendable {
     case photo = "Photo"
-    case polaroid = "Polaroid"
+    case polaroid = "Instant"
     case palette = "Palette"
 
     var id: Self { self }

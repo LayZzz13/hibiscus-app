@@ -1268,7 +1268,7 @@ private struct PolaroidComposerSheet: View {
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 16)
-            .navigationTitle("Polaroid")
+            .navigationTitle("Instant")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -1402,7 +1402,7 @@ private struct PolaroidComposerSheet: View {
                     .contentShape(Rectangle())
                     .offset(y: pagingAreaTop)
                     .modifier(ComposerPageSwipeModifier(count: photos.count, selection: $currentIndex))
-                    .accessibilityLabel("Swipe between Polaroid photos")
+                    .accessibilityLabel("Swipe between Instant photos")
             }
         }
         .frame(width: size.width, height: size.height)

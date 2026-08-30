@@ -34,6 +34,9 @@ final class CameraService: NSObject, ObservableObject {
     @Published var selectedCharacter: CameraCharacter = .alpha {
         didSet {
             renderCharacter = selectedCharacter
+#if DEBUG && targetEnvironment(simulator)
+            refreshSimulatorDemoPreview()
+#endif
             if !isApplyingSessionDefaults {
                 preferences.lastCameraCharacter = selectedCharacter
             }
@@ -83,6 +86,10 @@ final class CameraService: NSObject, ObservableObject {
     private var timerTask: Task<Void, Never>?
     private let preferences: AppPreferences
     private var isApplyingSessionDefaults = false
+#if DEBUG && targetEnvironment(simulator)
+    nonisolated(unsafe) private var isSimulatorDemoCameraEnabled = false
+    private var simulatorDemoSourceImage: UIImage?
+#endif
 
     init(preferences: AppPreferences) {
         self.preferences = preferences
@@ -105,6 +112,52 @@ final class CameraService: NSObject, ObservableObject {
         }
     }
 
+#if DEBUG && targetEnvironment(simulator)
+    func configureSimulatorDemoCamera(enabled: Bool, image: UIImage?) {
+        let wasEnabled = isSimulatorDemoCameraEnabled
+        isSimulatorDemoCameraEnabled = enabled
+        simulatorDemoSourceImage = image
+
+        if enabled {
+            authorizationState = .authorized
+            flashAvailable = true
+            lensOptions = [
+                CameraLensOption(factor: 0.5, label: "0.5×"),
+                CameraLensOption(factor: 1, label: "1×"),
+                CameraLensOption(factor: 2, label: "2×"),
+                CameraLensOption(factor: 4, label: "4×"),
+                CameraLensOption(factor: 8, label: "8×")
+            ]
+            if !lensOptions.contains(where: { $0.label == lensLabel }) {
+                lensLabel = "1×"
+            }
+            availableMegapixels = [12, 24, 48]
+            availableRawMegapixels = []
+            isRAWAvailable = false
+            selectedFormat = .processed
+            if !availableMegapixels.contains(selectedMegapixels) {
+                selectedMegapixels = 24
+            }
+            sessionQueue.async { [weak self] in
+                guard let self, self.session.isRunning else { return }
+                self.session.stopRunning()
+            }
+            if isRunning || wasEnabled {
+                startSimulatorDemoCamera()
+            }
+        } else if wasEnabled {
+            previewRenderer.clear()
+            isRunning = false
+            switch AVCaptureDevice.authorizationStatus(for: .video) {
+            case .authorized: authorizationState = .authorized
+            case .denied, .restricted: authorizationState = .denied
+            case .notDetermined: authorizationState = .unknown
+            @unknown default: authorizationState = .denied
+            }
+        }
+    }
+#endif
+
     func start() {
         previewRenderer.resume()
         isApplyingSessionDefaults = true
@@ -121,6 +174,12 @@ final class CameraService: NSObject, ObservableObject {
         } else if !preferences.rememberExposure {
             exposure = 0
         }
+#if DEBUG && targetEnvironment(simulator)
+        if isSimulatorDemoCameraEnabled {
+            startSimulatorDemoCamera()
+            return
+        }
+#endif
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized: authorizationState = .authorized
         case .denied, .restricted: authorizationState = .denied
@@ -148,6 +207,12 @@ final class CameraService: NSObject, ObservableObject {
         timerTask = nil
         countdown = nil
         previewRenderer.clear()
+#if DEBUG && targetEnvironment(simulator)
+        if isSimulatorDemoCameraEnabled {
+            isRunning = false
+            return
+        }
+#endif
         sessionQueue.async { [weak self] in
             guard let self, self.session.isRunning else { return }
             self.session.stopRunning()
@@ -187,6 +252,13 @@ final class CameraService: NSObject, ObservableObject {
         pendingPreviewImage = nil
         pendingRawData = nil
         captureProcessingToken = UUID()
+
+#if DEBUG && targetEnvironment(simulator)
+        if isSimulatorDemoCameraEnabled {
+            captureSimulatorDemoPhoto()
+            return
+        }
+#endif
 
         let codec: AVVideoCodecType = photoOutput.availablePhotoCodecTypes.contains(.hevc) ? .hevc : .jpeg
         let processedFormat: [String: Any] = [AVVideoCodecKey: codec]
@@ -244,17 +316,37 @@ final class CameraService: NSObject, ObservableObject {
         isProcessingCapture = false
         captureProcessingToken = UUID()
         statusMessage = nil
+#if DEBUG && targetEnvironment(simulator)
+        if isSimulatorDemoCameraEnabled {
+            startSimulatorDemoCamera()
+            return
+        }
+#endif
         startSessionOnly()
     }
 
     func switchCamera() {
         guard capturedImage == nil else { return }
+#if DEBUG && targetEnvironment(simulator)
+        if isSimulatorDemoCameraEnabled {
+            position = position == .back ? .front : .back
+            UISelectionFeedbackGenerator().selectionChanged()
+            return
+        }
+#endif
         position = position == .back ? .front : .back
         sessionQueue.async { [weak self] in self?.replaceCameraInput() }
         UISelectionFeedbackGenerator().selectionChanged()
     }
 
     func selectLens(_ option: CameraLensOption) {
+#if DEBUG && targetEnvironment(simulator)
+        if isSimulatorDemoCameraEnabled {
+            lensLabel = option.label
+            UISelectionFeedbackGenerator().selectionChanged()
+            return
+        }
+#endif
         guard let device = cameraInput?.device,
               let factor = lensFactors.min(by: {
                   abs(Double($0) - option.factor) < abs(Double($1) - option.factor)
@@ -270,6 +362,14 @@ final class CameraService: NSObject, ObservableObject {
     }
 
     func setExposure(_ value: Double) {
+#if DEBUG && targetEnvironment(simulator)
+        if isSimulatorDemoCameraEnabled {
+            exposure = min(2, max(-2, value))
+            if preferences.rememberExposure { preferences.lastExposure = exposure }
+            refreshSimulatorDemoPreview()
+            return
+        }
+#endif
         guard let device = cameraInput?.device else { return }
         let maximum = min(2, Double(device.maxExposureTargetBias))
         let minimum = max(-2, Double(device.minExposureTargetBias))
@@ -343,9 +443,93 @@ final class CameraService: NSObject, ObservableObject {
         }
     }
 
+#if DEBUG && targetEnvironment(simulator)
+    private func startSimulatorDemoCamera() {
+        guard isSimulatorDemoCameraEnabled else { return }
+        authorizationState = .authorized
+        isRunning = simulatorDemoSourceImage != nil
+        statusMessage = simulatorDemoSourceImage == nil
+            ? "No Simulator demo photo is available."
+            : nil
+        refreshSimulatorDemoPreview()
+    }
+
+    private func refreshSimulatorDemoPreview() {
+        guard isSimulatorDemoCameraEnabled,
+              !isCapturing,
+              let sourceImage = simulatorDemoSourceImage,
+              var source = ImageRenderer.sourceCIImage(sourceImage) else { return }
+        if exposure != 0 {
+            source = source.applyingFilter("CIExposureAdjust", parameters: [
+                kCIInputEVKey: exposure
+            ])
+        }
+        previewRenderer.resume()
+        previewRenderer.submit(source, character: selectedCharacter)
+    }
+
+    private func captureSimulatorDemoPhoto() {
+        guard let sourceImage = simulatorDemoSourceImage else {
+            isCapturing = false
+            isProcessingCapture = false
+            previewRenderer.resume()
+            statusMessage = "No Simulator demo photo is available."
+            return
+        }
+
+        let character = selectedCharacter
+        let aspectRatio = captureAspectRatio
+        let targetMegapixels = selectedMegapixels
+        let inputExposureEV = exposure
+        let token = captureProcessingToken
+        UIImpactFeedbackGenerator(style: .rigid).impactOccurred(intensity: 0.9)
+
+        photoProcessingQueue.async { [weak self] in
+            let preview = autoreleasepool {
+                ImageRenderer.cameraImage(
+                    sourceImage,
+                    character: character,
+                    aspectRatio: aspectRatio,
+                    targetMegapixels: min(2, targetMegapixels),
+                    inputExposureEV: inputExposureEV
+                ) ?? sourceImage
+            }
+            Task { @MainActor [weak self] in
+                guard let self, self.captureProcessingToken == token else { return }
+                self.pendingPreviewImage = preview
+                self.pendingProcessedImage = preview
+                self.capturedPreviewImage = preview
+                self.capturedImage = preview
+                self.isCapturing = false
+                self.isRunning = false
+            }
+
+            let processed = autoreleasepool {
+                ImageRenderer.cameraImage(
+                    sourceImage,
+                    character: character,
+                    aspectRatio: aspectRatio,
+                    targetMegapixels: targetMegapixels,
+                    inputExposureEV: inputExposureEV
+                ) ?? sourceImage
+            }
+            Task { @MainActor [weak self] in
+                guard let self, self.captureProcessingToken == token else { return }
+                self.pendingProcessedImage = processed
+                self.capturedImage = processed
+                self.capturedPreviewImage = processed
+                self.isProcessingCapture = false
+            }
+        }
+    }
+#endif
+
     private func configureAndStartIfNeeded() {
         sessionQueue.async { [weak self] in
             guard let self else { return }
+#if DEBUG && targetEnvironment(simulator)
+            guard !self.isSimulatorDemoCameraEnabled else { return }
+#endif
             if self.cameraInput == nil { self.configureSession() }
             if let device = self.cameraInput?.device {
                 Task { @MainActor in self.configureRotationCoordinator(for: device) }
@@ -433,6 +617,9 @@ final class CameraService: NSObject, ObservableObject {
         let rawAvailable = !photoOutput.availableRawPhotoPixelFormatTypes.isEmpty
         let rawMegapixels = rawAvailable ? supportedRAWPhotoMegapixels() : []
         Task { @MainActor in
+#if DEBUG && targetEnvironment(simulator)
+            guard !self.isSimulatorDemoCameraEnabled else { return }
+#endif
             self.isRAWAvailable = rawAvailable
             self.availableRawMegapixels = rawMegapixels
             if !rawAvailable { self.selectedFormat = .processed }
@@ -499,6 +686,9 @@ final class CameraService: NSObject, ObservableObject {
         let publishedValues = values
         let publishedMegapixels = preferredMegapixels
         Task { @MainActor in
+#if DEBUG && targetEnvironment(simulator)
+            guard !self.isSimulatorDemoCameraEnabled else { return }
+#endif
             self.availableMegapixels = publishedValues
             self.selectedMegapixels = publishedMegapixels
         }
@@ -645,6 +835,9 @@ final class CameraService: NSObject, ObservableObject {
         }
         let publishedOptions = options
         Task { @MainActor in
+#if DEBUG && targetEnvironment(simulator)
+            guard !self.isSimulatorDemoCameraEnabled else { return }
+#endif
             self.flashAvailable = device.hasFlash && device.position == .back
             self.lensLabel = selectedLabel
             self.lensOptions = publishedOptions
@@ -681,6 +874,9 @@ final class CameraService: NSObject, ObservableObject {
     }
 
     nonisolated private func startSessionOnlyFromQueue() {
+#if DEBUG && targetEnvironment(simulator)
+        guard !isSimulatorDemoCameraEnabled else { return }
+#endif
         guard !session.isRunning, cameraInput != nil else { return }
         session.startRunning()
         Task { @MainActor in self.isRunning = true }
@@ -693,6 +889,9 @@ final class CameraService: NSObject, ObservableObject {
 
 extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate {
     nonisolated func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+#if DEBUG && targetEnvironment(simulator)
+        guard !isSimulatorDemoCameraEnabled else { return }
+#endif
         guard let buffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         // The video connection delivers physically rotated portrait buffers.
         // Front-camera mirroring is also applied at the connection level.

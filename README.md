@@ -92,7 +92,7 @@ Grade supports temporary editing sessions of up to ten photographs. Each photogr
 Hibiscus can save or share:
 
 - **Photo** — the edited photograph.
-- **Polaroid** — an instant-photo-style card with optional metadata, drawing, and Hibiscus mark.
+- **Instant** — an instant-photo-style card with optional metadata, drawing, and Hibiscus mark.
 - **Palette** — the edited photograph with up to five representative color blocks.
 
 Normal photo exports can preserve supported source metadata and location when enabled. Originals are never overwritten.

@@ -26,7 +26,7 @@ struct MoreAppsView: View {
                         DiscoveryRow(
                             title: "1234567890.dev",
                             subtitle: "Visit 1234567890.dev",
-                            systemImage: "safari"
+                            systemImage: "globe"
                         )
                     }
                 }

@@ -5,6 +5,9 @@ struct SettingsView: View {
     @ObservedObject var preferences: AppPreferences
     @EnvironmentObject private var languageManager: LanguageManager
     @EnvironmentObject private var remoteContent: RemoteContentManager
+#if DEBUG && targetEnvironment(simulator)
+    @EnvironmentObject private var simulatorDemoMode: SimulatorDemoMode
+#endif
 
     var body: some View {
         NavigationStack {
@@ -21,6 +24,49 @@ struct SettingsView: View {
                         }
                     }
                 }
+
+#if DEBUG && targetEnvironment(simulator)
+                Section {
+                    Toggle("Demo Camera", isOn: $simulatorDemoMode.isCameraEnabled)
+                        .disabled(simulatorDemoMode.photos.isEmpty)
+
+                    Picker("Camera Photo", selection: $simulatorDemoMode.selectedPhotoID) {
+                        ForEach(simulatorDemoMode.photos) { photo in
+                            Text(photo.displayName).tag(photo.id)
+                        }
+                    }
+                    .disabled(simulatorDemoMode.photos.isEmpty)
+
+                    NavigationLink {
+                        SimulatorDemoPhotoSelectionView()
+                    } label: {
+                        HStack {
+                            Text("Demo Photos")
+                            Spacer()
+                            Text("\(simulatorDemoMode.selectedGradePhotoIDs.count) selected")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Button {
+                        simulatorDemoMode.requestCurrentPhotoForGrade()
+                    } label: {
+                        Label("Import Current Demo Photo to Grade", systemImage: "photo.badge.plus")
+                    }
+                    .disabled(simulatorDemoMode.selectedPhoto == nil || simulatorDemoMode.isPreparingGradeImport)
+
+                    NavigationLink {
+                        CreateLUTView(simulatorDemoPhoto: simulatorDemoMode.selectedPhoto)
+                    } label: {
+                        Label("Import Current Demo Photo to Create LUT", systemImage: "cube.transparent")
+                    }
+                    .disabled(simulatorDemoMode.selectedPhoto == nil)
+                } header: {
+                    Text("Demo Mode")
+                } footer: {
+                    Text("DEBUG Simulator only. Demo photos remain local to this development build.")
+                }
+#endif
 
                 Section("Camera") {
                     Toggle("Grid", isOn: $preferences.cameraGridEnabled)
@@ -49,7 +95,7 @@ struct SettingsView: View {
                 Section("Export") {
                     Toggle("Preserve Metadata", isOn: $preferences.preserveMetadata)
                     Toggle("Include Location", isOn: $preferences.includeLocation)
-                    Toggle("Polaroid Metadata", isOn: $preferences.polaroidMetadata)
+                    Toggle("Instant Metadata", isOn: $preferences.polaroidMetadata)
                     Toggle("Hibiscus Mark", isOn: $preferences.hibiscusMark)
 
                     NavigationLink {
@@ -189,6 +235,103 @@ struct SettingsView: View {
         return L10n.format("Version %@ (%@)", version, build)
     }
 }
+
+#if DEBUG && targetEnvironment(simulator)
+private struct SimulatorDemoPhotoSelectionView: View {
+    @EnvironmentObject private var simulatorDemoMode: SimulatorDemoMode
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(simulatorDemoMode.photos) { photo in
+                    Button {
+                        simulatorDemoMode.toggleGradeSelection(photo)
+                    } label: {
+                        HStack(spacing: 12) {
+                            Group {
+                                if let thumbnail = simulatorDemoMode.thumbnail(for: photo) {
+                                    Image(uiImage: thumbnail)
+                                        .resizable()
+                                        .scaledToFill()
+                                } else {
+                                    ProgressView().controlSize(.small)
+                                }
+                            }
+                            .frame(width: 54, height: 54)
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                            Text(photo.displayName)
+                                .foregroundStyle(.primary)
+
+                            Spacer()
+
+                            if simulatorDemoMode.selectedGradePhotoIDs.contains(photo.id) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .font(.title3)
+                                    .foregroundStyle(Color.hibiscusAccent)
+                            } else {
+                                Image(systemName: "circle")
+                                    .font(.title3)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            } footer: {
+                Text("Select up to \(SimulatorDemoMode.maximumGradePhotos) photos for one normal Grade session.")
+            }
+
+            Section {
+                Button {
+                    simulatorDemoMode.requestSelectedPhotosForGrade()
+                } label: {
+                    Label("Import Selected to Grade", systemImage: "square.and.arrow.down.on.square")
+                        .frame(maxWidth: .infinity, alignment: .center)
+                }
+                .disabled(
+                    simulatorDemoMode.selectedGradePhotoIDs.isEmpty
+                    || simulatorDemoMode.isPreparingGradeImport
+                )
+            }
+        }
+        .navigationTitle("Demo Photos")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(simulatorDemoMode.selectedGradePhotoIDs.isEmpty ? "Select All" : "Clear") {
+                    if simulatorDemoMode.selectedGradePhotoIDs.isEmpty {
+                        simulatorDemoMode.selectAllForGrade()
+                    } else {
+                        simulatorDemoMode.clearGradeSelection()
+                    }
+                }
+                .disabled(simulatorDemoMode.photos.isEmpty)
+            }
+        }
+        .overlay {
+            if simulatorDemoMode.isPreparingGradeImport {
+                ProgressView("Preparing Grade")
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 14)
+                    .hibiscusGlass(in: Capsule())
+            }
+        }
+        .alert(
+            "Demo Mode",
+            isPresented: Binding(
+                get: { simulatorDemoMode.statusMessage != nil },
+                set: { if !$0 { simulatorDemoMode.statusMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) { simulatorDemoMode.statusMessage = nil }
+        } message: {
+            Text(simulatorDemoMode.statusMessage ?? "")
+        }
+    }
+}
+#endif
 
 private struct LanguageSelectionView: View {
     @EnvironmentObject private var languageManager: LanguageManager

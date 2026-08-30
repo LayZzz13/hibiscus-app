@@ -191,6 +191,16 @@
         }
       }
     },
+    "Back" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "返回"
+          }
+        }
+      }
+    },
     "Base Picture" : {
       "localizations" : {
         "zh-Hans" : {
@@ -831,12 +841,21 @@
       }
     },
     "Instant" : {
-      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "即时成像"
+          }
+        }
+      }
+    },
+    "Instant Metadata" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "即时成像元数据"
           }
         }
       }
@@ -857,6 +876,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "请至少保留一种颜色。"
+          }
+        }
+      }
+    },
+    "Keep Configuration" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保留配置"
+          }
+        }
+      }
+    },
+    "Keep LUT Configuration?" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保留当前 LUT 配置？"
           }
         }
       }
@@ -1137,26 +1176,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "照片选择器"
-          }
-        }
-      }
-    },
-    "Polaroid" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "拍立得"
-          }
-        }
-      }
-    },
-    "Polaroid Metadata" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "拍立得元数据"
           }
         }
       }
@@ -1524,12 +1543,12 @@
         }
       }
     },
-    "Swipe between Polaroid photos" : {
+    "Swipe between Instant photos" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在拍立得照片间滑动"
+            "value" : "在即时成像照片间滑动"
           }
         }
       }
@@ -1645,6 +1664,16 @@
         }
       }
     },
+    "Your Base Picture and LUT configuration are temporary. Keep editing or finish and discard them." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "基准图片和 LUT 配置仅临时保留。继续编辑，或完成并丢弃它们。"
+          }
+        }
+      }
+    },
     "Your export is complete. Keep this temporary Grade session open?" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1671,46 +1700,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "当前无法变焦。"
-          }
-        }
-      }
-    },
-    "Back" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "返回"
-          }
-        }
-      }
-    },
-    "Keep Configuration" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "保留配置"
-          }
-        }
-      }
-    },
-    "Keep LUT Configuration?" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "保留当前 LUT 配置？"
-          }
-        }
-      }
-    },
-    "Your Base Picture and LUT configuration are temporary. Keep editing or finish and discard them." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "基准图片和 LUT 配置仅临时保留。继续编辑，或完成并丢弃它们。"
           }
         }
       }

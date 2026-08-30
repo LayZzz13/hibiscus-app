@@ -16,9 +16,13 @@ nonisolated enum ImageRenderer {
         _ image: UIImage,
         character: CameraCharacter,
         aspectRatio: CGFloat,
-        targetMegapixels: Int
+        targetMegapixels: Int,
+        inputExposureEV: Double = 0
     ) -> UIImage? {
-        guard let source = normalizedCIImage(image) else { return nil }
+        guard var source = normalizedCIImage(image) else { return nil }
+        if inputExposureEV != 0 {
+            source = exposure(source, ev: inputExposureEV)
+        }
         let orientedAspectRatio = source.extent.width > source.extent.height
             ? 1 / aspectRatio
             : aspectRatio

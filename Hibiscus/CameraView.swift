@@ -3,6 +3,9 @@ import SwiftUI
 
 struct CameraView: View {
     @ObservedObject var preferences: AppPreferences
+#if DEBUG && targetEnvironment(simulator)
+    @EnvironmentObject private var simulatorDemoMode: SimulatorDemoMode
+#endif
     @StateObject private var camera: CameraService
     @State private var showsExposure = false
     @State private var isSelectionPanelExpanded = true
@@ -52,13 +55,25 @@ struct CameraView: View {
         .onAppear {
             UIDevice.current.beginGeneratingDeviceOrientationNotifications()
             updateCameraControlRotation(UIDevice.current.orientation)
-            if isActive { camera.start() }
+            if isActive {
+#if DEBUG && targetEnvironment(simulator)
+                syncSimulatorDemoCamera()
+#endif
+                camera.start()
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
             updateCameraControlRotation(UIDevice.current.orientation)
         }
         .onChange(of: isActive) { _, active in
-            active ? camera.start() : camera.stop()
+            if active {
+#if DEBUG && targetEnvironment(simulator)
+                syncSimulatorDemoCamera()
+#endif
+                camera.start()
+            } else {
+                camera.stop()
+            }
         }
         .onChange(of: camera.capturedImage != nil) { _, hasCapture in
             captureAnimationTask?.cancel()
@@ -664,6 +679,15 @@ struct CameraView: View {
     private func phaseProgress(_ progress: CGFloat, from start: CGFloat, to end: CGFloat) -> CGFloat {
         min(1, max(0, (progress - start) / (end - start)))
     }
+
+#if DEBUG && targetEnvironment(simulator)
+    private func syncSimulatorDemoCamera() {
+        camera.configureSimulatorDemoCamera(
+            enabled: simulatorDemoMode.isCameraEnabled,
+            image: simulatorDemoMode.selectedCameraImage
+        )
+    }
+#endif
 
     private func updateCameraControlRotation(_ orientation: UIDeviceOrientation) {
         let rotation: Angle?

@@ -34,7 +34,7 @@ nonisolated struct PhotoMetadata: Equatable, Sendable {
     }
 }
 
-struct GradeImportItem {
+struct GradeImportItem: @unchecked Sendable {
     let image: UIImage
     let thumbnail: UIImage
     let metadata: PhotoMetadata

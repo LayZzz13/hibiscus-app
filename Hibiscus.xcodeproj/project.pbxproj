@@ -263,7 +263,9 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = X4CQDB35NV;
 				ENABLE_PREVIEWS = YES;
+				"EXCLUDED_SOURCE_FILE_NAMES[sdk=iphoneos*]" = HibiscusDemoPhotos.bundle;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photography";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Hibiscus uses the camera to take photos with its ten camera characters.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Hibiscus saves new graded photos to your photo library.";
@@ -301,7 +303,9 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = X4CQDB35NV;
 				ENABLE_PREVIEWS = YES;
+				EXCLUDED_SOURCE_FILE_NAMES = HibiscusDemoPhotos.bundle;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photography";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Hibiscus uses the camera to take photos with its ten camera characters.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Hibiscus saves new graded photos to your photo library.";
