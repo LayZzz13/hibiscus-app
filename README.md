@@ -126,3 +126,9 @@ Camera and Photos permissions are requested when their corresponding features ar
 ## License
 
 Licensed under MPL-2.0.
+
+## Brand and marketing assets
+
+The MPL-2.0 applies to the covered source code of Hibiscus. Unless explicitly stated otherwise, the Hibiscus name, app icon, logos, visual identity, screenshots, and other brand or marketing assets are **not** licensed under the MPL-2.0.
+
+Forks and redistributed versions should use their own name, icon, and branding. Do not use Hibiscus branding in a way that could cause confusion about whether an unofficial build is the official Hibiscus app or is endorsed by the owner.
