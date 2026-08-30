@@ -1560,7 +1560,6 @@ private struct HibiscusAppIcon: View {
                     .scaledToFit()
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .accessibilityHidden(true)
     }
 }

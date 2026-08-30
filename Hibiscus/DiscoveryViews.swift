@@ -293,36 +293,34 @@ private struct RemoteAppIcon: View {
 
     @ViewBuilder
     var body: some View {
-        Group {
-            if let url {
-                AsyncImage(url: url, transaction: Transaction(animation: .easeOut(duration: 0.18))) { phase in
-                    switch phase {
-                    case let .success(image):
-                        image.resizable().scaledToFill()
-                    case .empty:
-                        ProgressView().controlSize(.small)
-                    case .failure:
-                        fallback
-                    @unknown default:
-                        fallback
-                    }
+        if let url {
+            AsyncImage(url: url, transaction: Transaction(animation: .easeOut(duration: 0.18))) { phase in
+                switch phase {
+                case let .success(image):
+                    image
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 50, height: 50)
+                        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                .stroke(.white.opacity(0.10), lineWidth: 0.5)
+                        }
+                case .empty, .failure:
+                    loadingIndicator
+                @unknown default:
+                    loadingIndicator
                 }
-            } else {
-                fallback
             }
-        }
-        .frame(width: 50, height: 50)
-        .background(Color.secondary.opacity(0.10))
-        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .stroke(.white.opacity(0.10), lineWidth: 0.5)
+        } else {
+            loadingIndicator
         }
     }
 
-    private var fallback: some View {
-        Image(systemName: "app.fill")
-            .font(.system(size: 21))
-            .foregroundStyle(Color.hibiscusAccent)
+    private var loadingIndicator: some View {
+        ProgressView()
+            .controlSize(.small)
+            .tint(.secondary)
+            .frame(width: 50, height: 50)
     }
 }

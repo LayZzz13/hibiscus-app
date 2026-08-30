@@ -121,6 +121,7 @@ struct SettingsView: View {
                         }
                     }
                     .padding(.vertical, 3)
+                    .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
 
                     Button {
                         preferences.recordExploreMoreEcosystemOpen()

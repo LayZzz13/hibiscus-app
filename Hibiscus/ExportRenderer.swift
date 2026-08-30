@@ -282,8 +282,7 @@ nonisolated enum HibiscusExportRenderer {
                     ),
                     iconSize: canvas.width * 0.073,
                     spacing: canvas.width * 0.018,
-                    fontSize: canvas.width * 0.027,
-                    context: context.cgContext
+                    fontSize: canvas.width * 0.027
                 )
             }
 
@@ -343,8 +342,7 @@ nonisolated enum HibiscusExportRenderer {
                 centeredAt: CGPoint(x: brandArea.midX, y: brandArea.midY),
                 iconSize: width * 0.042,
                 spacing: width * 0.006,
-                fontSize: width * 0.019,
-                context: context.cgContext
+                fontSize: width * 0.019
             )
         }
     }
@@ -472,20 +470,16 @@ nonisolated enum HibiscusExportRenderer {
         ).draw(in: CGRect(origin: .zero, size: canvas))
     }
 
-    private static func drawAppIcon(in rect: CGRect, context: CGContext) {
+    private static func drawAppIcon(in rect: CGRect) {
         guard let icon = HibiscusBrand.appIcon() else { return }
-        context.saveGState()
-        UIBezierPath(roundedRect: rect, cornerRadius: rect.width * 0.22).addClip()
         icon.draw(in: rect)
-        context.restoreGState()
     }
 
     private static func drawBrandMark(
         centeredAt center: CGPoint,
         iconSize: CGFloat,
         spacing: CGFloat,
-        fontSize: CGFloat,
-        context: CGContext
+        fontSize: CGFloat
     ) {
         let brand = "Hibiscus" as NSString
         let attributes: [NSAttributedString.Key: Any] = [
@@ -500,7 +494,7 @@ nonisolated enum HibiscusExportRenderer {
             width: iconSize,
             height: iconSize
         )
-        drawAppIcon(in: markRect, context: context)
+        drawAppIcon(in: markRect)
         brand.draw(
             at: CGPoint(
                 x: center.x - brandSize.width / 2,
@@ -513,6 +507,11 @@ nonisolated enum HibiscusExportRenderer {
 
 nonisolated enum HibiscusBrand {
     static func appIcon() -> UIImage? {
+        // App-icon renditions supplied by iOS are opaque square resources meant
+        // to receive a system mask. Use the bundled transparent artwork for
+        // exports so its complete rounded-square silhouette remains intact.
+        if let image = UIImage(named: "HibiscusBrandIcon") { return image }
+
         let icons = Bundle.main.infoDictionary?["CFBundleIcons"] as? [String: Any]
         let primaryIcon = icons?["CFBundlePrimaryIcon"] as? [String: Any]
         let iconFiles = primaryIcon?["CFBundleIconFiles"] as? [String] ?? []
