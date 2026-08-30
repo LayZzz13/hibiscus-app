@@ -313,6 +313,10 @@ a {
   font-family: var(--font-sans);
 }
 
+.launch-cta[data-unavailable="true"] {
+  cursor: default;
+}
+
 .launch-cta .cta-default,
 .launch-cta .cta-hover {
   grid-area: 1 / 1;

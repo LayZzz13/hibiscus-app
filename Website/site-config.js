@@ -1,6 +1,6 @@
-// Replace this placeholder URL with the final public TestFlight invitation.
+// Add the final public TestFlight invitation here when it is available.
 window.HIBISCUS_SITE_CONFIG = {
   downloadLabel: "TestFlight",
-  downloadHoverLabel: "Join Beta",
-  downloadURL: "https://testflight.apple.com/join/PLACEHOLDER"
+  downloadHoverLabel: "Coming Soon",
+  downloadURL: ""
 };

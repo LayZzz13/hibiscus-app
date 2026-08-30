@@ -4,7 +4,6 @@
   document.querySelectorAll("[data-download-link]").forEach((link) => {
     const label = link.querySelector("[data-download-label]");
     const hoverLabel = link.querySelector("[data-download-hover-label]");
-    const fallback = link.dataset.downloadFallback || "#screenshots";
     if (label && config.downloadLabel) label.textContent = config.downloadLabel;
     if (hoverLabel && config.downloadHoverLabel) hoverLabel.textContent = config.downloadHoverLabel;
 
@@ -13,9 +12,11 @@
       link.removeAttribute("aria-disabled");
       link.removeAttribute("data-unavailable");
     } else {
-      link.href = fallback;
+      link.removeAttribute("href");
       link.setAttribute("data-unavailable", "true");
-      link.setAttribute("aria-label", `${config.downloadLabel || "App Store"}. View app screenshots.`);
+      link.setAttribute("aria-disabled", "true");
+      link.setAttribute("aria-label", `${config.downloadLabel || "TestFlight"}. Coming soon.`);
+      link.addEventListener("click", (event) => event.preventDefault());
     }
   });
 
