@@ -269,8 +269,8 @@ final class CameraService: NSObject, ObservableObject {
             settings = AVCapturePhotoSettings(rawPixelFormatType: rawType, processedFormat: processedFormat)
             if AVCapturePhotoOutput.isBayerRAWPixelFormat(rawType) {
                 // Full-sensor RAW requires the physical lens at its native zoom.
-                // Quality prioritization keeps 48 MP capture available.
-                settings.photoQualityPrioritization = .quality
+                // AVFoundation requires speed prioritization for Bayer RAW.
+                settings.photoQualityPrioritization = .speed
                 if let device = cameraInput?.device, device.videoZoomFactor != 1 {
                     do {
                         try device.lockForConfiguration()
@@ -396,7 +396,7 @@ final class CameraService: NSObject, ObservableObject {
         guard format == .processed || isRAWAvailable else { return }
         resolutionLock.lock()
         let selected: CMVideoDimensions?
-        if megapixels == 24 {
+        if megapixels == 24, format == .processed {
             // Native 24 MP delivery is deferred and cannot receive Hibiscus's
             // full-resolution character processing. Capture the 48 MP source and
             // produce a true 24 MP processed result locally instead.
@@ -556,6 +556,12 @@ final class CameraService: NSObject, ObservableObject {
             selectHighestResolutionPhotoFormat(for: device)
 
             videoOutput.alwaysDiscardsLateVideoFrames = true
+            // The .photo preset otherwise allows AVFoundation to hand the data
+            // output a deliberately small proxy buffer. Hibiscus renders that
+            // buffer directly, so request the active format's full video stream
+            // and let Core Image scale it to the Metal drawable instead.
+            videoOutput.automaticallyConfiguresOutputBufferDimensions = false
+            videoOutput.deliversPreviewSizedOutputBuffers = false
             let preferredPixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
             if videoOutput.availableVideoPixelFormatTypes.contains(preferredPixelFormat) {
                 videoOutput.videoSettings = [
@@ -567,6 +573,7 @@ final class CameraService: NSObject, ObservableObject {
             if session.canAddOutput(photoOutput) {
                 session.addOutput(photoOutput)
                 photoOutput.maxPhotoQualityPrioritization = .quality
+                enableAppleProRAWIfSupported()
                 updateMaximumPhotoDimensions(for: device)
             }
 
@@ -594,6 +601,7 @@ final class CameraService: NSObject, ObservableObject {
                 session.addInput(newInput)
                 cameraInput = newInput
                 selectHighestResolutionPhotoFormat(for: device)
+                enableAppleProRAWIfSupported()
                 updateMaximumPhotoDimensions(for: device)
                 configureVideoConnectionFallback(for: device)
                 updateDeviceState(device)
@@ -611,9 +619,7 @@ final class CameraService: NSObject, ObservableObject {
     }
 
     nonisolated private func refreshRAWAvailability() {
-        if photoOutput.isAppleProRAWSupported && !photoOutput.isAppleProRAWEnabled {
-            photoOutput.isAppleProRAWEnabled = true
-        }
+        enableAppleProRAWIfSupported()
         let rawAvailable = !photoOutput.availableRawPhotoPixelFormatTypes.isEmpty
         let rawMegapixels = rawAvailable ? supportedRAWPhotoMegapixels() : []
         Task { @MainActor in
@@ -626,15 +632,23 @@ final class CameraService: NSObject, ObservableObject {
         }
     }
 
-    /// Chooses the format with the largest still-photo dimensions. When several
-    /// formats expose that resolution, the front camera keeps the largest video
-    /// stream for a clean selfie preview. Rear cameras retain the lighter stream
-    /// that keeps character rendering responsive.
-    nonisolated private func selectHighestResolutionPhotoFormat(for device: AVCaptureDevice) {
-        let candidates = device.formats.filter { format in
-            !format.supportedMaxPhotoDimensions.isEmpty &&
-            format.videoSupportedFrameRateRanges.contains { $0.maxFrameRate >= 30 }
+    nonisolated private func enableAppleProRAWIfSupported() {
+        if photoOutput.isAppleProRAWSupported && !photoOutput.isAppleProRAWEnabled {
+            photoOutput.isAppleProRAWEnabled = true
         }
+    }
+
+    /// Chooses a true photo format with the largest still-photo dimensions.
+    /// Do not require a 30 fps range here: on high-resolution sensors that can
+    /// discard the only format exposing the native 48 MP photo dimensions.
+    /// Among equivalent still formats, prefer the largest video stream so the
+    /// Metal preview is not fed a low-resolution rear-camera buffer.
+    nonisolated private func selectHighestResolutionPhotoFormat(for device: AVCaptureDevice) {
+        let formatsWithPhotoDimensions = device.formats.filter {
+            !$0.supportedMaxPhotoDimensions.isEmpty
+        }
+        let highestQualityFormats = formatsWithPhotoDimensions.filter(\.isHighestPhotoQualitySupported)
+        let candidates = highestQualityFormats.isEmpty ? formatsWithPhotoDimensions : highestQualityFormats
         guard !candidates.isEmpty else { return }
         let best = candidates.max { lhs, rhs in
             let lhsPhotoPixels = Self.maximumPhotoPixels(for: lhs)
@@ -644,8 +658,7 @@ final class CameraService: NSObject, ObservableObject {
             let rhsVideo = CMVideoFormatDescriptionGetDimensions(rhs.formatDescription)
             let lhsVideoPixels = Int64(lhsVideo.width) * Int64(lhsVideo.height)
             let rhsVideoPixels = Int64(rhsVideo.width) * Int64(rhsVideo.height)
-            if device.position == .front { return lhsVideoPixels < rhsVideoPixels }
-            return lhsVideoPixels > rhsVideoPixels
+            return lhsVideoPixels < rhsVideoPixels
         }
         guard let best, best !== device.activeFormat else { return }
         do {
@@ -726,9 +739,10 @@ final class CameraService: NSObject, ObservableObject {
         resolutionLock.lock()
         let values = supportedPhotoDimensions.map(Self.megapixels(for:))
         resolutionLock.unlock()
-        // iOS only services native RAW sizes directly; 24 MP requires deferred
-        // processed-photo delivery and therefore is not a RAW capture size.
-        return Array(Set(values.filter { $0 != 24 && $0 > 0 })).sorted()
+        // Surface every photo dimension the active camera format reports. RAW
+        // selection then requests that exact native dimension rather than using
+        // the processed 24 MP downsampling path.
+        return Array(Set(values.filter { $0 > 0 })).sorted()
     }
 
     nonisolated private func preferredDevice(position: AVCaptureDevice.Position) -> AVCaptureDevice? {
