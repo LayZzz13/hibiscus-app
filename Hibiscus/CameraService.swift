@@ -19,6 +19,12 @@ nonisolated struct CameraLensOption: Identifiable, Equatable, Sendable {
     var id: String { label }
 }
 
+nonisolated private struct CameraLensTarget {
+    let displayFactor: CGFloat
+    let device: AVCaptureDevice
+    let deviceZoomFactor: CGFloat
+}
+
 @MainActor
 final class CameraService: NSObject, ObservableObject {
     @Published private(set) var capturedImage: UIImage?
@@ -347,6 +353,14 @@ final class CameraService: NSObject, ObservableObject {
             return
         }
 #endif
+        if position == .back {
+            lensLabel = option.label
+            sessionQueue.async { [weak self] in
+                self?.selectRearLens(displayFactor: CGFloat(option.factor))
+            }
+            UISelectionFeedbackGenerator().selectionChanged()
+            return
+        }
         guard let device = cameraInput?.device,
               let factor = lensFactors.min(by: {
                   abs(Double($0) - option.factor) < abs(Double($1) - option.factor)
@@ -592,7 +606,11 @@ final class CameraService: NSObject, ObservableObject {
         replaceCameraInput(with: device)
     }
 
-    nonisolated private func replaceCameraInput(with device: AVCaptureDevice) {
+    nonisolated private func replaceCameraInput(
+        with device: AVCaptureDevice,
+        requestedZoomFactor: CGFloat? = nil,
+        requestedDisplayFactor: CGFloat? = nil
+    ) {
         session.beginConfiguration()
         if let cameraInput { session.removeInput(cameraInput) }
         do {
@@ -604,7 +622,11 @@ final class CameraService: NSObject, ObservableObject {
                 enableAppleProRAWIfSupported()
                 updateMaximumPhotoDimensions(for: device)
                 configureVideoConnectionFallback(for: device)
-                updateDeviceState(device)
+                updateDeviceState(
+                    device,
+                    requestedZoomFactor: requestedZoomFactor,
+                    requestedDisplayFactor: requestedDisplayFactor
+                )
             }
         } catch {
             Task { @MainActor in self.statusMessage = L10n.string("Couldn’t switch cameras.")
@@ -644,13 +666,21 @@ final class CameraService: NSObject, ObservableObject {
     /// Among equivalent still formats, prefer the largest video stream so the
     /// Metal preview is not fed a low-resolution rear-camera buffer.
     nonisolated private func selectHighestResolutionPhotoFormat(for device: AVCaptureDevice) {
+        guard let best = highestResolutionPhotoFormat(for: device), best !== device.activeFormat else { return }
+        do {
+            try device.lockForConfiguration()
+            device.activeFormat = best
+            device.unlockForConfiguration()
+        } catch { }
+    }
+
+    nonisolated private func highestResolutionPhotoFormat(for device: AVCaptureDevice) -> AVCaptureDevice.Format? {
         let formatsWithPhotoDimensions = device.formats.filter {
             !$0.supportedMaxPhotoDimensions.isEmpty
         }
         let highestQualityFormats = formatsWithPhotoDimensions.filter(\.isHighestPhotoQualitySupported)
         let candidates = highestQualityFormats.isEmpty ? formatsWithPhotoDimensions : highestQualityFormats
-        guard !candidates.isEmpty else { return }
-        let best = candidates.max { lhs, rhs in
+        return candidates.max { lhs, rhs in
             let lhsPhotoPixels = Self.maximumPhotoPixels(for: lhs)
             let rhsPhotoPixels = Self.maximumPhotoPixels(for: rhs)
             if lhsPhotoPixels != rhsPhotoPixels { return lhsPhotoPixels < rhsPhotoPixels }
@@ -660,12 +690,6 @@ final class CameraService: NSObject, ObservableObject {
             let rhsVideoPixels = Int64(rhsVideo.width) * Int64(rhsVideo.height)
             return lhsVideoPixels < rhsVideoPixels
         }
-        guard let best, best !== device.activeFormat else { return }
-        do {
-            try device.lockForConfiguration()
-            device.activeFormat = best
-            device.unlockForConfiguration()
-        } catch { }
     }
 
     nonisolated private func updateMaximumPhotoDimensions(for device: AVCaptureDevice) {
@@ -747,7 +771,10 @@ final class CameraService: NSObject, ObservableObject {
 
     nonisolated private func preferredDevice(position: AVCaptureDevice.Position) -> AVCaptureDevice? {
         let types: [AVCaptureDevice.DeviceType] = position == .back
-            ? [.builtInTripleCamera, .builtInDualWideCamera, .builtInDualCamera, .builtInWideAngleCamera]
+            // Virtual multi-camera devices currently cap photo delivery below
+            // the native resolution of their 48 MP constituents. Use the main
+            // physical camera and switch physical inputs for discrete lenses.
+            ? [.builtInWideAngleCamera, .builtInTripleCamera, .builtInDualWideCamera, .builtInDualCamera]
             : [.builtInWideAngleCamera, .builtInTrueDepthCamera]
         for type in types {
             if let device = AVCaptureDevice.DiscoverySession(
@@ -801,25 +828,156 @@ final class CameraService: NSObject, ObservableObject {
         }
     }
 
-    nonisolated private func updateDeviceState(_ device: AVCaptureDevice) {
+    nonisolated private func selectRearLens(displayFactor: CGFloat) {
+        guard let target = rearLensTargets().min(by: {
+            abs($0.displayFactor - displayFactor) < abs($1.displayFactor - displayFactor)
+        }) else { return }
+
+        if cameraInput?.device.uniqueID == target.device.uniqueID {
+            updateDeviceState(
+                target.device,
+                requestedZoomFactor: target.deviceZoomFactor,
+                requestedDisplayFactor: target.displayFactor
+            )
+        } else {
+            replaceCameraInput(
+                with: target.device,
+                requestedZoomFactor: target.deviceZoomFactor,
+                requestedDisplayFactor: target.displayFactor
+            )
+        }
+    }
+
+    /// Builds the native rear-camera rail from the physical constituents. The
+    /// virtual device provides Apple's display-space focal-length mapping, while
+    /// each physical device keeps access to its full still-photo dimensions.
+    nonisolated private func rearLensTargets() -> [CameraLensTarget] {
+        let virtualTypes: [AVCaptureDevice.DeviceType] = [
+            .builtInTripleCamera,
+            .builtInDualWideCamera,
+            .builtInDualCamera
+        ]
+        let virtualDevice = virtualTypes.lazy.compactMap { type in
+            AVCaptureDevice.DiscoverySession(
+                deviceTypes: [type],
+                mediaType: .video,
+                position: .back
+            ).devices.first
+        }.first
+
+        var physicalDevices = virtualDevice?.constituentDevices ?? []
+        if physicalDevices.isEmpty {
+            physicalDevices = AVCaptureDevice.DiscoverySession(
+                deviceTypes: [.builtInUltraWideCamera, .builtInWideAngleCamera, .builtInTelephotoCamera],
+                mediaType: .video,
+                position: .back
+            ).devices
+        }
+        var seenDeviceIDs = Set<String>()
+        physicalDevices = physicalDevices.filter { seenDeviceIDs.insert($0.uniqueID).inserted }
+        physicalDevices.sort {
+            Self.videoFieldOfView(for: $0) > Self.videoFieldOfView(for: $1)
+        }
+        guard !physicalDevices.isEmpty else { return [] }
+
+        var nativeDisplayFactors: [CGFloat] = []
+        if let virtualDevice {
+            let multiplier = displayZoomMultiplier(for: virtualDevice)
+            nativeDisplayFactors = [virtualDevice.minAvailableVideoZoomFactor]
+            nativeDisplayFactors.append(contentsOf: virtualDevice.virtualDeviceSwitchOverVideoZoomFactors.map {
+                CGFloat(truncating: $0)
+            })
+            nativeDisplayFactors = nativeDisplayFactors.map { $0 * multiplier }.sorted()
+        }
+        if nativeDisplayFactors.count != physicalDevices.count {
+            nativeDisplayFactors = physicalDevices.enumerated().map { index, device in
+                switch device.deviceType {
+                case .builtInUltraWideCamera: 0.5
+                case .builtInWideAngleCamera: 1
+                case .builtInTelephotoCamera: index > 1 ? 3 : 2
+                default: CGFloat(index + 1)
+                }
+            }
+        }
+
+        var targets = zip(physicalDevices, nativeDisplayFactors).map { device, displayFactor in
+            CameraLensTarget(displayFactor: displayFactor, device: device, deviceZoomFactor: 1)
+        }
+        for (device, baseDisplayFactor) in zip(physicalDevices, nativeDisplayFactors) {
+            let format = highestResolutionPhotoFormat(for: device) ?? device.activeFormat
+            for zoomFactor in format.secondaryNativeResolutionZoomFactors {
+                let displayFactor = baseDisplayFactor * zoomFactor
+                guard zoomFactor >= device.minAvailableVideoZoomFactor,
+                      zoomFactor <= device.maxAvailableVideoZoomFactor,
+                      !targets.contains(where: { abs($0.displayFactor - displayFactor) < 0.025 }) else { continue }
+                targets.append(CameraLensTarget(
+                    displayFactor: displayFactor,
+                    device: device,
+                    deviceZoomFactor: zoomFactor
+                ))
+            }
+        }
+        return targets.sorted { $0.displayFactor < $1.displayFactor }
+    }
+
+    nonisolated private static func videoFieldOfView(for device: AVCaptureDevice) -> Float {
+        device.formats.map(\.videoFieldOfView).max() ?? device.activeFormat.videoFieldOfView
+    }
+
+    nonisolated private func updateDeviceState(
+        _ device: AVCaptureDevice,
+        requestedZoomFactor: CGFloat? = nil,
+        requestedDisplayFactor: CGFloat? = nil
+    ) {
         let multiplier = displayZoomMultiplier(for: device)
         let minimum = device.minAvailableVideoZoomFactor
         let maximum = device.maxAvailableVideoZoomFactor
-        var factors: [CGFloat] = [minimum, 1 / multiplier]
-        factors.append(contentsOf: device.virtualDeviceSwitchOverVideoZoomFactors.map { CGFloat(truncating: $0) })
-        factors.append(contentsOf: device.activeFormat.secondaryNativeResolutionZoomFactors)
-        factors = factors
-            .filter { $0 >= minimum && $0 <= maximum }
-            .sorted()
-            .reduce(into: []) { result, factor in
-                if result.last.map({ abs($0 - factor) > 0.025 }) ?? true {
-                    result.append(factor)
+        let selectedFactor: CGFloat
+        let selectedLabel: String
+        let publishedOptions: [CameraLensOption]
+
+        if device.position == .back {
+            let targets = rearLensTargets()
+            let selectedTarget = targets.min(by: { lhs, rhs in
+                if let requestedDisplayFactor {
+                    return abs(lhs.displayFactor - requestedDisplayFactor) < abs(rhs.displayFactor - requestedDisplayFactor)
                 }
+                let lhsMatchesDevice = lhs.device.uniqueID == device.uniqueID
+                let rhsMatchesDevice = rhs.device.uniqueID == device.uniqueID
+                if lhsMatchesDevice != rhsMatchesDevice { return lhsMatchesDevice }
+                return abs(lhs.displayFactor - 1) < abs(rhs.displayFactor - 1)
+            })
+            selectedFactor = max(minimum, min(requestedZoomFactor ?? selectedTarget?.deviceZoomFactor ?? 1, maximum))
+            let displayFactor = requestedDisplayFactor ?? selectedTarget?.displayFactor ?? 1
+            selectedLabel = formatLens(displayFactor)
+            publishedOptions = targets.map {
+                CameraLensOption(factor: Double($0.displayFactor), label: formatLens($0.displayFactor))
             }
-        if factors.isEmpty { factors = [minimum] }
-        lensFactors = factors
-        lensIndex = factors.enumerated().min(by: { abs($0.element * multiplier - 1) < abs($1.element * multiplier - 1) })?.offset ?? 0
-        let selectedFactor = factors[lensIndex]
+            lensFactors = [selectedFactor]
+            lensIndex = 0
+        } else {
+            var factors: [CGFloat] = [minimum, 1 / multiplier]
+            factors.append(contentsOf: device.activeFormat.secondaryNativeResolutionZoomFactors)
+            factors = factors
+                .filter { $0 >= minimum && $0 <= maximum }
+                .sorted()
+                .reduce(into: []) { result, factor in
+                    if result.last.map({ abs($0 - factor) > 0.025 }) ?? true {
+                        result.append(factor)
+                    }
+                }
+            if factors.isEmpty { factors = [minimum] }
+            lensFactors = factors
+            lensIndex = factors.enumerated().min(by: {
+                abs($0.element * multiplier - 1) < abs($1.element * multiplier - 1)
+            })?.offset ?? 0
+            selectedFactor = factors[lensIndex]
+            selectedLabel = formatLens(selectedFactor * multiplier)
+            publishedOptions = factors.map {
+                CameraLensOption(factor: Double($0), label: formatLens($0 * multiplier))
+            }
+        }
+
         do {
             try device.lockForConfiguration()
             if device.isFocusModeSupported(.continuousAutoFocus) {
@@ -839,15 +997,6 @@ final class CameraService: NSObject, ObservableObject {
             device.videoZoomFactor = selectedFactor
             device.unlockForConfiguration()
         } catch { }
-        let displayValue = Double(selectedFactor * multiplier)
-        let selectedLabel = formatLens(CGFloat(displayValue))
-        var options: [CameraLensOption] = []
-        for factor in factors {
-            let label = formatLens(factor * multiplier)
-            guard !options.contains(where: { $0.label == label }) else { continue }
-            options.append(CameraLensOption(factor: Double(factor), label: label))
-        }
-        let publishedOptions = options
         Task { @MainActor in
 #if DEBUG && targetEnvironment(simulator)
             guard !self.isSimulatorDemoCameraEnabled else { return }
