@@ -201,15 +201,19 @@ struct CameraView: View {
                         .position(x: topControlX, y: topControlY)
                         .zIndex(3)
 
-                    zoomControl
-                        .rotationEffect(cameraControlRotation)
-                        .position(x: zoomX, y: positionedZoomY)
-                        .zIndex(3)
-
                     cameraControls
                         .padding(.horizontal, 10)
                         .padding(.bottom, 10)
-                        .frame(maxHeight: .infinity, alignment: .bottom)
+                        .frame(
+                            width: proxy.size.width,
+                            height: proxy.size.height,
+                            alignment: .bottom
+                        )
+                        .overlay {
+                            zoomControl
+                                .rotationEffect(cameraControlRotation)
+                                .position(x: zoomX, y: positionedZoomY)
+                        }
                         .zIndex(3)
 
                     if showsCharacterPad {

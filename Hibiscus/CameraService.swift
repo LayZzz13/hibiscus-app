@@ -34,7 +34,9 @@ final class CameraService: NSObject, ObservableObject {
     @Published private(set) var authorizationState: CameraAuthorizationState = .unknown
     @Published private(set) var isRunning = false
     @Published private(set) var flashAvailable = false
-    @Published var flashMode: CaptureFlashMode = .auto
+    @Published var flashMode: CaptureFlashMode = .auto {
+        didSet { preferences.lastFlashMode = flashMode }
+    }
     @Published private(set) var lensLabel = "1×"
     @Published private(set) var lensOptions = [CameraLensOption(factor: 1, label: "1×")]
     @Published private(set) var exposure: Double = 0
@@ -142,6 +144,7 @@ final class CameraService: NSObject, ObservableObject {
         renderCharacterAdjustment = .centered
         selectedRatio = preferences.defaultAspectRatio
         captureAspectRatio = preferences.defaultAspectRatio.portraitRatio
+        flashMode = preferences.lastFlashMode
         exposure = preferences.rememberExposure ? preferences.lastExposure : 0
         isApplyingSessionDefaults = false
         switch AVCaptureDevice.authorizationStatus(for: .video) {
@@ -1415,6 +1418,27 @@ final class CameraService: NSObject, ObservableObject {
                 let displayFactor = baseDisplayFactor * zoomFactor
                 guard zoomFactor >= device.minAvailableVideoZoomFactor,
                       zoomFactor <= device.maxAvailableVideoZoomFactor,
+                      !targets.contains(where: { abs($0.displayFactor - displayFactor) < 0.025 }) else { continue }
+                targets.append(CameraLensTarget(
+                    displayFactor: displayFactor,
+                    device: device,
+                    deviceZoomFactor: zoomFactor
+                ))
+            }
+        }
+
+        // Single-camera iPhones (including Air/SE/e configurations) do not
+        // have a telephoto constituent to contribute to the native rail. Keep
+        // every system-reported option above, then provide only the requested
+        // 3× and 4× crop targets when the active format can actually reach them.
+        if physicalDevices.count == 1,
+           let device = physicalDevices.first,
+           let baseDisplayFactor = nativeDisplayFactors.first {
+            let format = highestResolutionPhotoFormat(for: device) ?? device.activeFormat
+            for displayFactor in [CGFloat(3), CGFloat(4)] {
+                let zoomFactor = displayFactor / max(0.01, baseDisplayFactor)
+                guard zoomFactor >= device.minAvailableVideoZoomFactor,
+                      zoomFactor <= format.videoMaxZoomFactor,
                       !targets.contains(where: { abs($0.displayFactor - displayFactor) < 0.025 }) else { continue }
                 targets.append(CameraLensTarget(
                     displayFactor: displayFactor,

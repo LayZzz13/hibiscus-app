@@ -62,6 +62,9 @@ final class AppPreferences: ObservableObject {
     var lastExposure: Double {
         didSet { save(lastExposure, for: .lastExposure) }
     }
+    var lastFlashMode: CaptureFlashMode {
+        didSet { save(lastFlashMode.rawValue, for: .lastFlashMode) }
+    }
     var lastGradeStyle: GradeStyle {
         didSet { save(lastGradeStyle.rawValue, for: .lastGradeStyle) }
     }
@@ -103,6 +106,9 @@ final class AppPreferences: ObservableObject {
             storageValue: defaults.string(forKey: Key.lastCameraSelection.rawValue) ?? ""
         ) ?? .character(formerCharacter)
         lastExposure = defaults.object(forKey: Key.lastExposure.rawValue) as? Double ?? 0
+        lastFlashMode = CaptureFlashMode(
+            rawValue: defaults.string(forKey: Key.lastFlashMode.rawValue) ?? ""
+        ) ?? .auto
         lastGradeStyle = GradeStyle(
             rawValue: defaults.string(forKey: Key.lastGradeStyle.rawValue) ?? ""
         ) ?? .pure
@@ -165,6 +171,7 @@ final class AppPreferences: ObservableObject {
         case lastCameraCharacter = "state.camera.lastCharacter"
         case lastCameraSelection = "state.camera.lastSelection"
         case lastExposure = "state.camera.lastExposure"
+        case lastFlashMode = "state.camera.flashMode"
         case lastGradeStyle = "state.grade.lastStyle"
     }
 }
