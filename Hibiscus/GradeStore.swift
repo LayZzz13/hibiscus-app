@@ -34,10 +34,23 @@ nonisolated struct PhotoMetadata: Equatable, Sendable {
     }
 }
 
-struct GradeImportItem: @unchecked Sendable {
+nonisolated struct GradeImportItem: @unchecked Sendable {
     let image: UIImage
     let thumbnail: UIImage
     let metadata: PhotoMetadata
+    let livePhoto: LivePhotoSource?
+
+    init(
+        image: UIImage,
+        thumbnail: UIImage,
+        metadata: PhotoMetadata,
+        livePhoto: LivePhotoSource? = nil
+    ) {
+        self.image = image
+        self.thumbnail = thumbnail
+        self.metadata = metadata
+        self.livePhoto = livePhoto
+    }
 }
 
 nonisolated struct GradeStyleSession: Equatable, Sendable {
@@ -51,9 +64,11 @@ struct GradeSessionPhoto: Identifiable {
     let thumbnail: UIImage
     var settings: GradeSettings
     var automaticAccent: AccentColor
+    var automaticEnhance: EnhanceAdjustment
     var isAccentCustomized: Bool
     var styleSessions: [GradeStyle: GradeStyleSession]
     let metadata: PhotoMetadata
+    let livePhoto: LivePhotoSource?
 }
 
 private struct GradeEditState: Equatable {
@@ -67,29 +82,39 @@ final class GradeStore: ObservableObject {
     @Published private(set) var photos: [GradeSessionPhoto] = []
     @Published private(set) var currentIndex = 0
     @Published private(set) var thumbnails: [GradeStyle: UIImage] = [:]
+    @Published private(set) var savedLookThumbnails: [UUID: UIImage] = [:]
     @Published var settings = GradeSettings()
     @Published var activeSurface: ActiveGradeSurface = .style
     @Published var isStyleRailExpanded = true
     @Published private(set) var automaticAccent = AccentColor.warmGray
+    @Published private(set) var automaticEnhance = EnhanceAdjustment.neutral
+    @Published private(set) var comparisonSourceImage: UIImage?
     @Published private(set) var isAccentCustomized = false
     @Published var isShowingOriginal = false
     @Published var statusMessage: String?
     @Published private(set) var isExporting = false
     @Published private(set) var canUndo = false
     @Published private(set) var canRedo = false
+    @Published private(set) var livePhotoPreview: PHLivePhoto?
+    @Published private(set) var isPreparingLivePhotoPreview = false
 
     nonisolated let previewRenderer = GradePreviewRenderer()
     private let thumbnailQueue = DispatchQueue(label: "dev.hibiscus.grade-thumbnails", qos: .utility)
     private let analysisQueue = DispatchQueue(label: "dev.hibiscus.grade-analysis", qos: .userInitiated)
     private var thumbnailGeneration = 0
+    private var savedLookThumbnailGeneration = 0
     private var analysisGeneration = 0
+    private var comparisonGeneration = 0
     private var thumbnailToken: RenderToken?
+    private var savedLookThumbnailToken: RenderToken?
     private let preferences: AppPreferences
     private var undoStacks: [UUID: [GradeEditState]] = [:]
     private var redoStacks: [UUID: [GradeEditState]] = [:]
     private var lastCoalescingKey: String?
     private var lastCoalescingPhotoID: UUID?
     private var lastCoalescingTime = Date.distantPast
+    private var livePhotoPreviewGeneration = 0
+    private var livePhotoPreviewOutput: ProcessedLivePhoto?
 
     init(preferences: AppPreferences) {
         self.preferences = preferences
@@ -128,6 +153,7 @@ final class GradeStore: ObservableObject {
         replacing: Bool
     ) {
         let accepted = Array(imports.prefix(max(0, 10 - (replacing ? 0 : photos.count))))
+        imports.dropFirst(accepted.count).compactMap(\.livePhoto).forEach { $0.removeOwnedResources() }
         guard !accepted.isEmpty else {
             statusMessage = photos.count >= 10
                 ? L10n.string("You can edit up to 10 photos at once.")
@@ -142,6 +168,7 @@ final class GradeStore: ObservableObject {
 
         if replacing {
             cancelBackgroundWork()
+            photos.compactMap(\.livePhoto).forEach { $0.removeOwnedResources() }
             photos = []
             currentIndex = 0
             undoStacks = [:]
@@ -151,20 +178,26 @@ final class GradeStore: ObservableObject {
         }
 
         let newPhotos = accepted.map { item in
-            GradeSessionPhoto(
+            var itemSettings = newPhotoSettings
+            if item.livePhoto != nil {
+                itemSettings.enhance.isEnabled = false
+            }
+            return GradeSessionPhoto(
                 id: UUID(),
                 image: item.image,
                 thumbnail: item.thumbnail,
-                settings: newPhotoSettings,
+                settings: itemSettings,
                 automaticAccent: .warmGray,
+                automaticEnhance: .neutral,
                 isAccentCustomized: carriesCurrentEdits && isAccentCustomized,
                 styleSessions: [
-                    newPhotoSettings.style: GradeStyleSession(
-                        settings: newPhotoSettings,
+                    itemSettings.style: GradeStyleSession(
+                        settings: itemSettings,
                         isAccentCustomized: carriesCurrentEdits && isAccentCustomized
                     )
                 ],
-                metadata: item.metadata
+                metadata: item.metadata,
+                livePhoto: item.livePhoto
             )
         }
         let firstNewIndex = photos.count
@@ -172,9 +205,7 @@ final class GradeStore: ObservableObject {
         currentIndex = replacing ? 0 : firstNewIndex
         loadCurrentPhoto(expandStyleRail: preferredStyle == nil)
         if let preferredStyle { preferences.lastGradeStyle = preferredStyle }
-        if preferences.autoAccent {
-            analyzeAccents(for: photos.map { ($0.id, $0.thumbnail) })
-        }
+        analyzePhotos(for: newPhotos.map { ($0.id, $0.thumbnail) })
         statusMessage = nil
     }
 
@@ -197,6 +228,7 @@ final class GradeStore: ObservableObject {
         let preservedAccentPoint = settings.accentPoint
         let preservedAccentStrength = settings.accentStrength
         let preservedAccentCustomization = isAccentCustomized
+        let preservedEnhance = settings.enhance
         syncCurrentPhoto()
         let session = photos[currentIndex].styleSessions[style]
             ?? Self.defaultStyleSession(style: style, automaticAccent: automaticAccent)
@@ -204,6 +236,7 @@ final class GradeStore: ObservableObject {
         nextSettings.accent = preservedAccent
         nextSettings.accentPoint = preservedAccentPoint
         nextSettings.accentStrength = preservedAccentStrength
+        nextSettings.enhance = preservedEnhance
         settings = nextSettings
         isAccentCustomized = preservedAccentCustomization
         if sourceImage != nil { isStyleRailExpanded = false }
@@ -212,6 +245,91 @@ final class GradeStore: ObservableObject {
         syncCurrentPhoto()
         UISelectionFeedbackGenerator().selectionChanged()
         render()
+    }
+
+    func applySavedLook(_ look: SavedLook) {
+        guard photos.indices.contains(currentIndex) else { return }
+        recordUndo()
+        syncCurrentPhoto()
+
+        var nextSettings = settings
+        nextSettings.style = look.style
+        nextSettings.stylePoint = look.stylePoint
+        nextSettings.styleStrength = min(1, max(0, look.styleStrength))
+        // Enhance is intentionally preserved because it is not part of a Look.
+
+        if let accent = look.accent {
+            nextSettings.accentPoint = accent.point
+            nextSettings.accentStrength = min(1, max(0, accent.strength))
+            switch accent.mode {
+            case .automatic:
+                nextSettings.accent = automaticAccent
+                isAccentCustomized = false
+            case .manual:
+                if let manualColor = accent.manualColor {
+                    nextSettings.accent = manualColor
+                    isAccentCustomized = true
+                }
+            }
+        }
+
+        settings = nextSettings
+        activeSurface = .style
+        isStyleRailExpanded = false
+        preferences.lastGradeStyle = look.style
+        syncCurrentPhoto()
+        render()
+        UISelectionFeedbackGenerator().selectionChanged()
+    }
+
+    func generateSavedLookThumbnails(_ looks: [SavedLook]) {
+        savedLookThumbnailGeneration += 1
+        let generation = savedLookThumbnailGeneration
+        savedLookThumbnailToken?.cancel()
+        let token = RenderToken()
+        savedLookThumbnailToken = token
+
+        guard let photo = currentPhoto, !looks.isEmpty else {
+            savedLookThumbnails = [:]
+            return
+        }
+
+        let image = photo.thumbnail
+        let baseSettings = settings
+        let automaticAccent = automaticAccent
+        thumbnailQueue.async { [weak self] in
+            guard !token.isCancelled else { return }
+            let base = autoreleasepool { ImageRenderer.resizedImage(image, maxDimension: 320) } ?? image
+            var result: [UUID: UIImage] = [:]
+            for look in looks {
+                guard !token.isCancelled else { return }
+                var previewSettings = baseSettings
+                previewSettings.style = look.style
+                previewSettings.stylePoint = look.stylePoint
+                previewSettings.styleStrength = min(1, max(0, look.styleStrength))
+                if let accent = look.accent {
+                    previewSettings.accentPoint = accent.point
+                    previewSettings.accentStrength = min(1, max(0, accent.strength))
+                    switch accent.mode {
+                    case .automatic:
+                        previewSettings.accent = automaticAccent
+                    case .manual:
+                        if let manualColor = accent.manualColor {
+                            previewSettings.accent = manualColor
+                        }
+                    }
+                }
+                if let thumbnail = autoreleasepool(invoking: {
+                    ImageRenderer.gradeImage(base, settings: previewSettings, maxDimension: 240)
+                }) {
+                    result[look.id] = thumbnail
+                }
+            }
+            DispatchQueue.main.async {
+                guard let self, generation == self.savedLookThumbnailGeneration else { return }
+                self.savedLookThumbnails = result
+            }
+        }
     }
 
     func applyStyleToAll() {
@@ -235,6 +353,7 @@ final class GradeStore: ObservableObject {
     func removePhoto() {
         guard photos.indices.contains(currentIndex) else { return }
         let removedID = photos[currentIndex].id
+        photos[currentIndex].livePhoto?.removeOwnedResources()
         photos.remove(at: currentIndex)
         undoStacks[removedID] = nil
         redoStacks[removedID] = nil
@@ -249,6 +368,7 @@ final class GradeStore: ObservableObject {
 
     func removeAllPhotos() {
         cancelBackgroundWork()
+        photos.compactMap(\.livePhoto).forEach { $0.removeOwnedResources() }
         photos = []
         undoStacks = [:]
         redoStacks = [:]
@@ -302,6 +422,17 @@ final class GradeStore: ObservableObject {
         UISelectionFeedbackGenerator().selectionChanged()
     }
 
+    func toggleEnhance() {
+        guard let currentPhoto, currentPhoto.livePhoto == nil else { return }
+        recordUndo()
+        settings.enhance.isEnabled.toggle()
+        activeSurface = .style
+        syncCurrentPhoto()
+        refreshComparisonSource()
+        render()
+        UISelectionFeedbackGenerator().selectionChanged()
+    }
+
     func updateStrength(_ value: Double) {
         let currentValue = activeSurface == .style ? settings.styleStrength : settings.accentStrength
         guard currentValue != value else { return }
@@ -318,6 +449,48 @@ final class GradeStore: ObservableObject {
         guard activeSurface != surface else { return }
         activeSurface = surface
         UISelectionFeedbackGenerator().selectionChanged()
+    }
+
+    func playLivePhoto() {
+        guard let photo = currentPhoto, let source = photo.livePhoto,
+              !isPreparingLivePhotoPreview else { return }
+        syncCurrentPhoto()
+        invalidateLivePhotoPreview()
+        isPreparingLivePhotoPreview = true
+        let generation = livePhotoPreviewGeneration
+        let photoID = photo.id
+        let fixedSettings = settings
+        let placeholder = photo.image
+        Task {
+            guard let output = await LivePhotoProcessor.process(
+                source,
+                settings: fixedSettings,
+                preview: true
+            ) else {
+                guard generation == livePhotoPreviewGeneration else { return }
+                isPreparingLivePhotoPreview = false
+                statusMessage = L10n.string("Couldn’t prepare this Live Photo.")
+                return
+            }
+            guard let preview = await LivePhotoPreviewFactory.make(from: output, placeholder: placeholder) else {
+                output.cleanUp()
+                guard generation == livePhotoPreviewGeneration else { return }
+                isPreparingLivePhotoPreview = false
+                statusMessage = L10n.string("Couldn’t prepare this Live Photo.")
+                return
+            }
+            guard generation == livePhotoPreviewGeneration, currentPhoto?.id == photoID else {
+                output.cleanUp()
+                return
+            }
+            livePhotoPreviewOutput = output
+            livePhotoPreview = preview
+            isPreparingLivePhotoPreview = false
+        }
+    }
+
+    func dismissLivePhotoPreview() {
+        invalidateLivePhotoPreview()
     }
 
     func undo() {
@@ -508,6 +681,48 @@ final class GradeStore: ObservableObject {
         }
     }
 
+    func saveLivePhotos(batch: Bool, completion: @escaping (Bool) -> Void) {
+        guard !isExporting else {
+            completion(false)
+            return
+        }
+        syncCurrentPhoto()
+        let selectedPhotos = batch ? photos : currentPhoto.map { [$0] } ?? []
+        let livePhotos = selectedPhotos.filter { $0.livePhoto != nil }
+        guard !livePhotos.isEmpty else {
+            statusMessage = L10n.string("No Live Photos are selected.")
+            completion(false)
+            return
+        }
+
+        isExporting = true
+        Task {
+            var outputs: [ProcessedLivePhoto] = []
+            for photo in livePhotos {
+                guard let source = photo.livePhoto,
+                      let output = await LivePhotoProcessor.process(source, settings: photo.settings) else {
+                    outputs.forEach { $0.cleanUp() }
+                    isExporting = false
+                    statusMessage = L10n.string("Couldn’t render this Live Photo.")
+                    completion(false)
+                    return
+                }
+                outputs.append(output)
+            }
+            LivePhotoLibrarySaver.save(outputs) { [weak self] success in
+                guard let self else { return }
+                self.isExporting = false
+                self.statusMessage = success
+                    ? (outputs.count == 1
+                        ? L10n.string("Saved Live Photo")
+                        : L10n.format("Saved %lld Live Photos", Int64(outputs.count)))
+                    : L10n.string("Couldn’t save these Live Photos.")
+                if success { UINotificationFeedbackGenerator().notificationOccurred(.success) }
+                completion(success)
+            }
+        }
+    }
+
     func saveToPhotos(_ images: [UIImage]) {
         guard !images.isEmpty else { return }
         PHPhotoLibrary.requestAuthorization(for: .addOnly) { [weak self] status in
@@ -608,18 +823,22 @@ final class GradeStore: ObservableObject {
     }
 
     private func loadCurrentPhoto(expandStyleRail: Bool) {
+        invalidateLivePhotoPreview()
         guard let photo = currentPhoto else {
             clearSessionState()
             return
         }
         settings = photo.settings
         automaticAccent = photo.automaticAccent
+        automaticEnhance = photo.automaticEnhance
         isAccentCustomized = photo.isAccentCustomized
         activeSurface = .style
         isStyleRailExpanded = expandStyleRail
         isShowingOriginal = false
         thumbnails = [:]
+        savedLookThumbnails = [:]
         previewRenderer.load(photo.image, settings: settings)
+        refreshComparisonSource()
         generateThumbnails(for: photo.thumbnail)
         resetHistoryCoalescing()
         refreshHistoryAvailability()
@@ -629,6 +848,7 @@ final class GradeStore: ObservableObject {
         guard photos.indices.contains(currentIndex) else { return }
         photos[currentIndex].settings = settings
         photos[currentIndex].automaticAccent = automaticAccent
+        photos[currentIndex].automaticEnhance = automaticEnhance
         photos[currentIndex].isAccentCustomized = isAccentCustomized
         photos[currentIndex].styleSessions[settings.style] = GradeStyleSession(
             settings: settings,
@@ -637,15 +857,20 @@ final class GradeStore: ObservableObject {
     }
 
     private func clearSessionState() {
+        invalidateLivePhotoPreview()
         thumbnailToken?.cancel()
+        savedLookThumbnailToken?.cancel()
         currentIndex = 0
         thumbnails = [:]
         settings = Self.defaultSettings(preferredStyle: nil, preferences: preferences)
         automaticAccent = .warmGray
+        automaticEnhance = .neutral
         isAccentCustomized = false
         activeSurface = .style
         isStyleRailExpanded = true
         isShowingOriginal = false
+        comparisonGeneration += 1
+        comparisonSourceImage = nil
         statusMessage = nil
         previewRenderer.clear()
         resetHistoryCoalescing()
@@ -655,6 +880,8 @@ final class GradeStore: ObservableObject {
     private func cancelBackgroundWork() {
         thumbnailToken?.cancel()
         thumbnailGeneration += 1
+        savedLookThumbnailToken?.cancel()
+        savedLookThumbnailGeneration += 1
         analysisGeneration += 1
     }
 
@@ -699,6 +926,7 @@ final class GradeStore: ObservableObject {
         activeSurface = state.activeSurface
         preferences.lastGradeStyle = state.settings.style
         syncCurrentPhoto()
+        refreshComparisonSource()
         render()
     }
 
@@ -719,37 +947,109 @@ final class GradeStore: ObservableObject {
     }
 
     private func render() {
+        invalidateLivePhotoPreview()
         previewRenderer.update(settings: settings)
     }
 
-    private func analyzeAccents(for entries: [(UUID, UIImage)]) {
+    func disableExperimentalEnhance() {
+        guard photos.contains(where: { $0.settings.enhance.isEnabled })
+                || settings.enhance.isEnabled else { return }
+        for index in photos.indices {
+            photos[index].settings.enhance.isEnabled = false
+            for style in photos[index].styleSessions.keys {
+                photos[index].styleSessions[style]?.settings.enhance.isEnabled = false
+            }
+        }
+        settings.enhance.isEnabled = false
+        automaticEnhance.isEnabled = false
+        syncCurrentPhoto()
+        refreshComparisonSource()
+        render()
+    }
+
+    private func refreshComparisonSource() {
+        comparisonGeneration += 1
+        let generation = comparisonGeneration
+        guard let photo = currentPhoto else {
+            comparisonSourceImage = nil
+            return
+        }
+        guard settings.enhance.isEnabled else {
+            comparisonSourceImage = photo.image
+            return
+        }
+
+        let photoID = photo.id
+        let source = photo.image
+        let adjustment = settings.enhance
+        comparisonSourceImage = source
+        analysisQueue.async { [weak self] in
+            let corrected = autoreleasepool {
+                ImageRenderer.enhancedSourceImage(source, adjustment: adjustment) ?? source
+            }
+            DispatchQueue.main.async {
+                guard let self,
+                      generation == self.comparisonGeneration,
+                      self.currentPhoto?.id == photoID,
+                      self.settings.enhance == adjustment else { return }
+                self.comparisonSourceImage = corrected
+            }
+        }
+    }
+
+    private func invalidateLivePhotoPreview() {
+        livePhotoPreviewGeneration += 1
+        livePhotoPreview = nil
+        isPreparingLivePhotoPreview = false
+        livePhotoPreviewOutput?.cleanUp()
+        livePhotoPreviewOutput = nil
+    }
+
+    private func analyzePhotos(for entries: [(UUID, UIImage)]) {
         analysisGeneration += 1
         let generation = analysisGeneration
         for (id, image) in entries {
             analysisQueue.async { [weak self] in
-                let accent = autoreleasepool { AccentAnalyzer.analyze(image) }
+                let result = autoreleasepool {
+                    (AccentAnalyzer.analyze(image), EnhanceAnalyzer.analyze(image))
+                }
                 DispatchQueue.main.async {
-                    guard let self, self.preferences.autoAccent,
+                    guard let self,
                           generation == self.analysisGeneration,
                           let index = self.photos.firstIndex(where: { $0.id == id }) else { return }
+                    let accent = result.0
+                    var enhance = result.1
                     var photo = self.photos[index]
-                    photo.automaticAccent = accent
+                    photo.automaticEnhance = enhance
                     for style in photo.styleSessions.keys {
-                        guard var session = photo.styleSessions[style], !session.isAccentCustomized else { continue }
-                        session.settings.accent = accent
+                        guard var session = photo.styleSessions[style] else { continue }
+                        enhance.isEnabled = session.settings.enhance.isEnabled
+                        session.settings.enhance = enhance
+                        if self.preferences.autoAccent, !session.isAccentCustomized {
+                            session.settings.accent = accent
+                        }
                         photo.styleSessions[style] = session
                     }
-                    if !photo.isAccentCustomized {
+                    enhance.isEnabled = photo.settings.enhance.isEnabled
+                    photo.settings.enhance = enhance
+                    // Always retain the image-derived suggestion. The Auto
+                    // Accent setting controls automatic application, while a
+                    // Saved Look may explicitly request Auto Accent later.
+                    photo.automaticAccent = accent
+                    if self.preferences.autoAccent, !photo.isAccentCustomized {
                         photo.settings.accent = accent
                     }
                     self.photos[index] = photo
                     if index == self.currentIndex {
+                        self.automaticEnhance = enhance
+                        self.settings.enhance = enhance
                         self.automaticAccent = accent
-                        if !self.isAccentCustomized {
+                        if self.preferences.autoAccent, !self.isAccentCustomized {
                             self.settings.accent = accent
-                            self.syncCurrentPhoto()
-                            self.render()
                         }
+                        self.syncCurrentPhoto()
+                        self.refreshComparisonSource()
+                        self.render()
                     }
                 }
             }

@@ -5,6 +5,7 @@ import SwiftUI
 struct GradeView: View {
     @ObservedObject var store: GradeStore
     @ObservedObject var preferences: AppPreferences
+    @ObservedObject var savedLooks: SavedLooksStore
     let isActive: Bool
     @State private var pickerItems: [PhotosPickerItem] = []
     @State private var showsPicker = false
@@ -13,8 +14,14 @@ struct GradeView: View {
     @State private var shareFiles: [URL] = []
     @State private var polaroidRequest: PolaroidExportRequest?
     @State private var paletteRequest: PaletteExportRequest?
-    @State private var styleRailPosition: GradeStyle?
+    @State private var styleRailMode: GradeStyleRailMode = .builtIn
+    @State private var styleRailPosition: String?
     @State private var showsAccentPicker = false
+    @State private var showsSaveLookSheet = false
+    @State private var saveLookDefaultName = ""
+    @State private var showsRenameLookAlert = false
+    @State private var renameLookTarget: SavedLook?
+    @State private var renameLookName = ""
     @State private var photoSwipeOffset: CGFloat = 0
     @State private var didCompleteShare = false
     @State private var pendingSharePhotoIDs: Set<UUID> = []
@@ -24,6 +31,7 @@ struct GradeView: View {
     @State private var presentingCompletionFlowID: UUID?
     @State private var postExportDiscoveryRequest: PostExportDiscoveryRequest?
     @State private var postExportDiscoveryOpenedEcosystem = false
+    @State private var originalPreviewPressTask: Task<Void, Never>?
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -46,6 +54,11 @@ struct GradeView: View {
                     VStack(spacing: 0) {
                         photoArea
                             .frame(height: previewHeight)
+                            .simultaneousGesture(
+                                TapGesture().onEnded {
+                                    collapseStyleRailIfNeeded()
+                                }
+                            )
 
                         if store.sourceImage != nil {
                             editor(width: proxy.size.width)
@@ -53,6 +66,7 @@ struct GradeView: View {
                         }
                     }
                     .padding(.bottom, navigationClearance)
+                    .zIndex(store.isStyleRailExpanded ? 2 : 0)
 
                     if store.sourceImage != nil, store.isStyleRailExpanded {
                         Color.clear
@@ -66,7 +80,7 @@ struct GradeView: View {
                         styleRail
                             .frame(width: proxy.size.width)
                             .offset(y: previewHeight)
-                            .zIndex(1)
+                            .zIndex(3)
                             .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
                     }
                 }
@@ -75,7 +89,23 @@ struct GradeView: View {
 
             if let message = store.statusMessage {
                 StatusPill(message: message)
-                    .onTapGesture { store.statusMessage = nil }
+                    .zIndex(10)
+                    .onTapGesture {
+                        withAnimation(.easeOut(duration: 0.18)) {
+                            store.statusMessage = nil
+                        }
+                    }
+                    .task(id: message) {
+                        do {
+                            try await Task.sleep(for: .seconds(3))
+                        } catch {
+                            return
+                        }
+                        guard !Task.isCancelled, store.statusMessage == message else { return }
+                        withAnimation(.easeOut(duration: 0.18)) {
+                            store.statusMessage = nil
+                        }
+                    }
             }
 
             if store.isExporting {
@@ -87,22 +117,47 @@ struct GradeView: View {
                     .frame(maxHeight: .infinity, alignment: .center)
             }
         }
+        .animation(.easeInOut(duration: 0.22), value: store.statusMessage)
         .tint(.white)
         .photosPicker(
             isPresented: $showsPicker,
             selection: $pickerItems,
             maxSelectionCount: photoPickerLimit,
-            matching: .images
+            matching: .any(of: [.images, .livePhotos])
         )
         .onChange(of: pickerItems) { _, newItems in
             guard !newItems.isEmpty else { return }
             Task { await importPhotos(from: newItems) }
+        }
+        .onChange(of: preferences.experimentalEnhance) { _, isEnabled in
+            if !isEnabled {
+                store.disableExperimentalEnhance()
+            }
+        }
+        .onDisappear {
+            originalPreviewPressTask?.cancel()
+            originalPreviewPressTask = nil
+            store.isShowingOriginal = false
         }
         .onChange(of: store.photos.map(\.id)) { _, photoIDs in
             exportedPhotoIDs.formIntersection(photoIDs)
             if photoIDs.isEmpty {
                 pendingSharePhotoIDs = []
                 didCompleteShare = false
+                styleRailMode = .builtIn
+            }
+        }
+        .sheet(isPresented: $showsSaveLookSheet) {
+            SaveLookSheet(initialName: saveLookDefaultName) { name, includeAccent in
+                guard let look = savedLooks.saveCurrent(
+                    name: name,
+                    settings: store.settings,
+                    isAccentCustomized: store.isAccentCustomized,
+                    includeAccent: includeAccent
+                ) else { return }
+                styleRailPosition = savedLookRailID(look)
+                store.generateSavedLookThumbnails(savedLooks.looks)
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
             }
         }
         .sheet(
@@ -150,6 +205,7 @@ struct GradeView: View {
             PaletteComposerSheet(
                 photos: request.batch ? store.photos : store.currentPhoto.map { [$0] } ?? [],
                 primaryActionShares: request.shares,
+                showsMark: preferences.hibiscusMark,
                 onComplete: { composition in
                     paletteRequest = nil
                     performExport(
@@ -194,6 +250,19 @@ struct GradeView: View {
         } message: {
             Text("Your export is complete. Keep this temporary Grade session open?")
         }
+        .alert("Rename Look", isPresented: $showsRenameLookAlert) {
+            TextField("Name", text: $renameLookName)
+            Button("Cancel", role: .cancel) {
+                renameLookTarget = nil
+            }
+            Button("Save") {
+                if let renameLookTarget {
+                    savedLooks.rename(renameLookTarget, to: renameLookName)
+                }
+                renameLookTarget = nil
+            }
+            .disabled(renameLookName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
     }
 
     @ViewBuilder
@@ -210,14 +279,38 @@ struct GradeView: View {
                         minimumDuration: 0.38,
                         maximumDistance: 10,
                         pressing: { pressing in
-                            store.isShowingOriginal = pressing
-                            if pressing { UIImpactFeedbackGenerator(style: .soft).impactOccurred() }
+                            originalPreviewPressTask?.cancel()
+                            originalPreviewPressTask = nil
+                            guard pressing else {
+                                store.isShowingOriginal = false
+                                return
+                            }
+                            originalPreviewPressTask = Task { @MainActor in
+                                do {
+                                    try await Task.sleep(for: .seconds(0.38))
+                                } catch {
+                                    return
+                                }
+                                guard !Task.isCancelled else { return }
+                                store.isShowingOriginal = true
+                                UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                            }
                         },
                         perform: {}
                     )
                     .simultaneousGesture(photoPagingGesture)
 
-                PhotoFitView(image: source)
+                if let livePhoto = store.livePhotoPreview, !store.isShowingOriginal {
+                    HibiscusLivePhotoView(
+                        livePhoto: livePhoto,
+                        onPlaybackEnded: store.dismissLivePhotoPreview
+                    )
+                    .background(Color(uiColor: .secondarySystemBackground))
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+                }
+
+                PhotoFitView(image: store.comparisonSourceImage ?? source)
                     .background(Color(uiColor: .secondarySystemBackground))
                     .opacity(store.isShowingOriginal ? 1 : 0)
                     .allowsHitTesting(false)
@@ -226,6 +319,17 @@ struct GradeView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                     .padding(12)
 
+                HStack(spacing: 8) {
+                    if preferences.experimentalEnhance, store.currentPhoto?.livePhoto == nil {
+                        enhanceButton
+                    }
+                    if store.currentPhoto?.livePhoto != nil {
+                        livePhotoPlaybackButton
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(12)
+
                 if store.batchCount > 1 {
                     pageDots
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
@@ -233,7 +337,9 @@ struct GradeView: View {
                 }
 
                 if store.isShowingOriginal {
-                    Text("Original")
+                    Text(LocalizedStringKey(
+                        store.settings.enhance.isEnabled ? "Enhanced Original" : "Original"
+                    ))
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 12)
@@ -279,7 +385,8 @@ struct GradeView: View {
                 .accessibilityLabel("Undo grade edit")
 
                 Button {
-                    styleRailPosition = store.settings.style
+                    styleRailMode = .builtIn
+                    styleRailPosition = builtInStyleRailID(store.settings.style)
                     withAnimation(.snappy(duration: 0.22)) { store.isStyleRailExpanded = true }
                 } label: {
                     HStack(spacing: 6) {
@@ -343,7 +450,10 @@ struct GradeView: View {
                 style: store.settings.style,
                 accent: store.settings.accent,
                 point: kind == .style ? store.settings.stylePoint : store.settings.accentPoint,
-                onActivate: { store.activate(kind) },
+                onActivate: {
+                    collapseStyleRailIfNeeded()
+                    store.activate(kind)
+                },
                 onChange: kind == .style ? store.updateStylePoint : store.updateAccentPoint
             )
             .frame(width: size, height: size)
@@ -377,58 +487,111 @@ struct GradeView: View {
     private var styleRail: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             LazyHStack(spacing: 10) {
-                ForEach(GradeStyle.allCases) { style in
+                if styleRailMode == .builtIn {
+                    ForEach(GradeStyle.allCases) { style in
+                        builtInStyleRailItem(style)
+                            .id(builtInStyleRailID(style))
+                    }
+
                     Button {
-                        styleRailPosition = style
-                        if store.sourceImage == nil {
-                            pendingStyle = style
-                            pickerReplacesSession = true
-                            showsPicker = true
-                        } else {
-                            withAnimation(.snappy(duration: 0.22)) { store.selectStyle(style) }
+                        store.generateSavedLookThumbnails(savedLooks.looks)
+                        withAnimation(.snappy(duration: 0.22)) {
+                            styleRailMode = .savedLooks
+                            styleRailPosition = saveLookRailID
                         }
                     } label: {
-                        VStack(spacing: 5) {
-                            Group {
-                                if let thumbnail = store.thumbnails[style] {
-                                    Image(uiImage: thumbnail)
-                                        .resizable()
-                                        .scaledToFill()
-                                } else {
-                                    LinearGradient(
-                                        colors: [style.tint.opacity(0.35), style.tint],
-                                        startPoint: .topLeading,
-                                        endPoint: .bottomTrailing
-                                    )
-                                }
-                            }
-                            .frame(width: 60, height: 46)
-                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                            .overlay {
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .stroke(store.settings.style == style ? Color.primary : Color.primary.opacity(0.10), lineWidth: store.settings.style == style ? 1.5 : 0.5)
-                            }
-                            .hibiscusGlass(
-                                .clear,
-                                interactive: true,
-                                isEnabled: store.settings.style == style,
-                                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            )
-
-                            Text(style.rawValue)
-                                .font(.caption2.weight(store.settings.style == style ? .bold : .medium))
-                                .foregroundStyle(store.settings.style == style ? Color.primary : Color.secondary)
-                        }
+                        railActionTile(
+                            title: "My Looks",
+                            systemImage: "bookmark.fill",
+                            tint: .hibiscusAccent
+                        )
                     }
                     .buttonStyle(.plain)
-                    .id(style)
+                    .id(myLooksRailID)
+                } else {
+                    HStack(spacing: 6) {
+                        Button {
+                            withAnimation(.snappy(duration: 0.22)) {
+                                styleRailMode = .builtIn
+                                styleRailPosition = builtInStyleRailID(store.settings.style)
+                            }
+                        } label: {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(.white)
+                                .frame(width: 27, height: 46)
+                                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .hibiscusGlass(
+                                    tint: .hibiscusAccent,
+                                    interactive: true,
+                                    in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Styles")
+
+                        Button {
+                            saveLookDefaultName = L10n.format("%@ Look", store.settings.style.rawValue)
+                            showsSaveLookSheet = true
+                        } label: {
+                            Image(systemName: "plus")
+                                .font(.system(size: 12, weight: .bold))
+                                .frame(width: 27, height: 46)
+                                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .hibiscusGlass(
+                                    interactive: true,
+                                    in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Save Current Look")
+                    }
+                    .frame(width: 60, height: 46)
+                    .id(saveLookRailID)
+
+                    if savedLooks.looks.isEmpty {
+                        Text("No saved looks yet")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 116, height: 68)
+                    } else {
+                        ForEach(savedLooks.looks) { look in
+                            savedLookRailItem(look)
+                                .id(savedLookRailID(look))
+                        }
+                    }
+
                 }
             }
             .padding(.horizontal, 14)
             .scrollTargetLayout()
         }
         .scrollPosition(id: $styleRailPosition, anchor: .center)
-        .onAppear { styleRailPosition = store.settings.style }
+        .onAppear {
+            styleRailPosition = styleRailMode == .builtIn
+                ? builtInStyleRailID(store.settings.style)
+                : saveLookRailID
+            if styleRailMode == .savedLooks {
+                store.generateSavedLookThumbnails(savedLooks.looks)
+            }
+        }
+        .onChange(of: savedLooks.looks) { _, looks in
+            guard styleRailMode == .savedLooks else { return }
+            store.generateSavedLookThumbnails(looks)
+        }
+        .onChange(of: store.settings) { _, _ in
+            guard styleRailMode == .savedLooks else { return }
+            store.generateSavedLookThumbnails(savedLooks.looks)
+        }
+        .onChange(of: store.automaticAccent) { _, _ in
+            guard styleRailMode == .savedLooks else { return }
+            store.generateSavedLookThumbnails(savedLooks.looks)
+        }
+        .onChange(of: store.currentIndex) { _, _ in
+            guard styleRailMode == .savedLooks else { return }
+            store.generateSavedLookThumbnails(savedLooks.looks)
+        }
+        .animation(.snappy(duration: 0.22), value: styleRailMode)
         .frame(maxWidth: .infinity)
         .frame(height: 78)
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
@@ -436,7 +599,183 @@ struct GradeView: View {
         .padding(.horizontal, 8)
     }
 
+    private func builtInStyleRailItem(_ style: GradeStyle) -> some View {
+        Button {
+            styleRailPosition = builtInStyleRailID(style)
+            if store.sourceImage == nil {
+                pendingStyle = style
+                pickerReplacesSession = true
+                showsPicker = true
+            } else {
+                withAnimation(.snappy(duration: 0.22)) { store.selectStyle(style) }
+            }
+        } label: {
+            VStack(spacing: 5) {
+                Group {
+                    if let thumbnail = store.thumbnails[style] {
+                        Image(uiImage: thumbnail)
+                            .resizable()
+                            .scaledToFill()
+                    } else {
+                        LinearGradient(
+                            colors: [style.tint.opacity(0.35), style.tint],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    }
+                }
+                .frame(width: 60, height: 46)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(
+                            store.settings.style == style ? Color.primary : Color.primary.opacity(0.10),
+                            lineWidth: store.settings.style == style ? 1.5 : 0.5
+                        )
+                }
+                .hibiscusGlass(
+                    .clear,
+                    interactive: true,
+                    isEnabled: store.settings.style == style,
+                    in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                )
+
+                Text(style.rawValue)
+                    .font(.caption2.weight(store.settings.style == style ? .bold : .medium))
+                    .foregroundStyle(store.settings.style == style ? Color.primary : Color.secondary)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func savedLookRailItem(_ look: SavedLook) -> some View {
+        Button {
+            withAnimation(.snappy(duration: 0.22)) {
+                store.applySavedLook(look)
+            }
+        } label: {
+            VStack(spacing: 5) {
+                Group {
+                    if let thumbnail = store.savedLookThumbnails[look.id] {
+                        Image(uiImage: thumbnail)
+                            .resizable()
+                            .scaledToFill()
+                    } else {
+                        LinearGradient(
+                            colors: [look.style.tint.opacity(0.30), look.style.tint],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    }
+                }
+                .frame(width: 60, height: 46)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(Color.primary.opacity(0.14), lineWidth: 0.5)
+                }
+                .animation(.easeInOut(duration: 0.18), value: store.savedLookThumbnails[look.id] != nil)
+
+                Text(look.name)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .frame(width: 60)
+            }
+            .frame(width: 60)
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button {
+                renameLookTarget = look
+                renameLookName = look.name
+                showsRenameLookAlert = true
+            } label: {
+                Label("Rename", systemImage: "pencil")
+            }
+            Button(role: .destructive) {
+                savedLooks.delete(look)
+                UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        }
+    }
+
+    private func railActionTile(title: LocalizedStringKey, systemImage: String, tint: Color) -> some View {
+        VStack(spacing: 5) {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(tint.opacity(0.18))
+                .frame(width: 60, height: 46)
+                .overlay {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(.primary)
+                }
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(Color.primary.opacity(0.12), lineWidth: 0.5)
+                }
+            Text(title)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .frame(width: 60)
+        }
+        .frame(width: 60)
+    }
+
+    private func builtInStyleRailID(_ style: GradeStyle) -> String { "style.\(style.rawValue)" }
+    private func savedLookRailID(_ look: SavedLook) -> String { "look.\(look.id.uuidString)" }
+    private var myLooksRailID: String { "my-looks" }
+    private var saveLookRailID: String { "save-look" }
+
+    private func collapseStyleRailIfNeeded() {
+        guard store.isStyleRailExpanded else { return }
+        withAnimation(.snappy(duration: 0.22)) {
+            store.isStyleRailExpanded = false
+        }
+    }
+
     private var topPhotoActions: some View {
+        photoActionsMenu
+    }
+
+    private var enhanceButton: some View {
+        Button(action: store.toggleEnhance) {
+            Image(systemName: "wand.and.sparkles")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(store.settings.enhance.isEnabled ? Color.hibiscusAccent : .white)
+                .frame(width: 19, height: 19)
+        }
+        .hibiscusGlassButtonStyle()
+        .accessibilityLabel(store.settings.enhance.isEnabled ? "Turn Enhance off" : "Enhance")
+    }
+
+    private var livePhotoPlaybackButton: some View {
+        Button(action: store.playLivePhoto) {
+            HStack(spacing: 5) {
+                if store.isPreparingLivePhotoPreview {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Image(systemName: "livephoto")
+                }
+                Text("LIVE")
+            }
+            .font(.caption2.weight(.bold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 9)
+            .frame(height: 30)
+            .hibiscusGlass(tint: .black.opacity(0.25), interactive: true, in: Capsule())
+            .frame(minWidth: 76, minHeight: 44, alignment: .topLeading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(store.isPreparingLivePhotoPreview)
+        .accessibilityLabel("Play Live Photo")
+    }
+
+    private var photoActionsMenu: some View {
         Menu {
             exportDestinationMenu(batch: false, shares: false)
             exportDestinationMenu(batch: false, shares: true)
@@ -502,13 +841,28 @@ struct GradeView: View {
     }
 
     private func exportDestinationMenu(batch: Bool, shares: Bool) -> some View {
-        Menu {
+        let containsLivePhoto = hasLivePhoto(batch: batch)
+        return Menu {
+            if !shares, containsLivePhoto {
+                Button {
+                    performLivePhotoExport(batch: batch)
+                } label: {
+                    Label("Live Photo", systemImage: "livephoto")
+                }
+                Divider()
+            }
             ForEach(HibiscusExportFormat.allCases) { format in
                 Button {
                     requestExport(format: format, batch: batch, shares: shares)
                 } label: {
                     Label {
-                        Text(LocalizedStringKey(format.rawValue))
+                        HStack(spacing: 4) {
+                            Text(LocalizedStringKey(format.rawValue))
+                            if containsLivePhoto {
+                                Text("(Static)")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
                     } icon: {
                         Image(systemName: format.systemImage)
                     }
@@ -520,6 +874,25 @@ struct GradeView: View {
             } icon: {
                 Image(systemName: shares ? "square.and.arrow.up" : "square.and.arrow.down")
             }
+        }
+    }
+
+    private func hasLivePhoto(batch: Bool) -> Bool {
+        if batch { return store.photos.contains { $0.livePhoto != nil } }
+        return store.currentPhoto?.livePhoto != nil
+    }
+
+    private func performLivePhotoExport(batch: Bool) {
+        let photoIDs: Set<UUID>
+        if batch {
+            photoIDs = Set(store.photos.filter { $0.livePhoto != nil }.map(\.id))
+        } else if let photo = store.currentPhoto, photo.livePhoto != nil {
+            photoIDs = [photo.id]
+        } else {
+            photoIDs = []
+        }
+        store.saveLivePhotos(batch: batch) { success in
+            if success { registerCompletedExport(for: photoIDs) }
         }
     }
 
@@ -685,35 +1058,67 @@ struct GradeView: View {
 
     private func importPhotos(from items: [PhotosPickerItem]) async {
         var imports: [GradeImportItem] = []
+        var flattenedLivePhoto = false
         for item in items.prefix(10) {
-            do {
-                guard let data = try await item.loadTransferable(type: Data.self),
-                      let image = AccentAnalyzer.downsample(data, maxDimension: 4096) ?? UIImage(data: data) else {
-                    continue
-                }
-                let thumbnail = AccentAnalyzer.downsample(data, maxDimension: 384)
-                    ?? ImageRenderer.resizedImage(image, maxDimension: 384)
-                    ?? image
-                imports.append(
-                    GradeImportItem(
-                        image: image,
-                        thumbnail: thumbnail,
-                        metadata: PhotoMetadataExtractor.metadata(from: data)
-                    )
-                )
-            } catch {
-                continue
-            }
+            let result = await LivePhotoImportLoader.load(item)
+            if let imported = result.item { imports.append(imported) }
+            flattenedLivePhoto = flattenedLivePhoto || result.livePhotoWasFlattened
         }
         await MainActor.run {
             if imports.isEmpty {
                 store.statusMessage = L10n.string("These photos couldn’t be opened.")
             } else {
                 store.loadBatch(imports, preferredStyle: pendingStyle, replacing: pickerReplacesSession)
+                if flattenedLivePhoto {
+                    store.statusMessage = L10n.string("Allow full Photos access to preserve Live Photos.")
+                }
             }
             pendingStyle = nil
             pickerItems = []
         }
+    }
+}
+
+private enum GradeStyleRailMode {
+    case builtIn
+    case savedLooks
+}
+
+private struct SaveLookSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var name: String
+    @State private var includeAccent = false
+    let onSave: (String, Bool) -> Void
+
+    init(initialName: String, onSave: @escaping (String, Bool) -> Void) {
+        _name = State(initialValue: initialName)
+        self.onSave = onSave
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                TextField("Name", text: $name)
+                Toggle("Include Accent", isOn: $includeAccent)
+                    .tint(.hibiscusAccent)
+            }
+            .navigationTitle("Save Look")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        onSave(name, includeAccent)
+                        dismiss()
+                    }
+                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+        .presentationDetents([.height(250)])
+        .presentationDragIndicator(.visible)
     }
 }
 
@@ -940,6 +1345,7 @@ private struct PaletteComposerSheet: View {
     @Environment(\.dismiss) private var dismiss
     let photos: [GradeSessionPhoto]
     let primaryActionShares: Bool
+    let showsMark: Bool
     let onComplete: (PaletteComposition) -> Void
 
     @State private var currentIndex = 0
@@ -1034,7 +1440,8 @@ private struct PaletteComposerSheet: View {
                 Button {
                     let composition = PaletteComposition(
                         selectedIndices: selectedIndices.sorted(),
-                        showsHexCodes: showsHexCodes
+                        showsHexCodes: showsHexCodes,
+                        showsMark: showsMark
                     )
                     onComplete(composition)
                     dismiss()
@@ -1095,7 +1502,7 @@ private struct PaletteComposerSheet: View {
         let image = previewImage ?? sourceImage
         let photoHeight = size.width * photoHeightRatio(for: image)
         let colorHeight = size.width * (150 / 1800)
-        let brandHeight = size.width * (180 / 1800)
+        let brandHeight = showsMark ? size.width * (180 / 1800) : 0
         let selectedColors = selectedIndices.sorted().compactMap { index in
             candidates.indices.contains(index) ? candidates[index] : nil
         }
@@ -1130,14 +1537,16 @@ private struct PaletteComposerSheet: View {
             }
             .frame(height: colorHeight)
 
-            VStack(spacing: size.width * 0.006) {
-                HibiscusAppIcon()
-                    .frame(width: size.width * 0.042, height: size.width * 0.042)
-                Text("Hibiscus")
-                    .font(.system(size: size.width * 0.019, weight: .semibold))
-                    .foregroundStyle(.black.opacity(0.66))
+            if showsMark {
+                VStack(spacing: size.width * 0.006) {
+                    HibiscusAppIcon()
+                        .frame(width: size.width * 0.042, height: size.width * 0.042)
+                    Text("Hibiscus")
+                        .font(.system(size: size.width * 0.019, weight: .semibold))
+                        .foregroundStyle(.black.opacity(0.66))
+                }
+                .frame(width: size.width, height: brandHeight)
             }
-            .frame(width: size.width, height: brandHeight)
         }
         .frame(width: size.width, height: size.height)
         .background(Color(red: 0.965, green: 0.958, blue: 0.938))
@@ -1150,7 +1559,8 @@ private struct PaletteComposerSheet: View {
     }
 
     private func fittedCardSize(in available: CGSize) -> CGSize {
-        let ratio = photoHeightRatio(for: previewImage ?? sourceImage) + (330 / 1800)
+        let footerHeight: CGFloat = showsMark ? 330 : 150
+        let ratio = photoHeightRatio(for: previewImage ?? sourceImage) + (footerHeight / 1800)
         let aspect = 1 / ratio
         let width = min(available.width, available.height * aspect)
         return CGSize(width: width, height: width / aspect)

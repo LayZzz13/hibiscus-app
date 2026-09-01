@@ -17,11 +17,13 @@ The app intentionally avoids accounts, cloud sync, subscriptions, an internal ph
 
 ## Camera
 
-Camera opens directly into a live, character-processed viewfinder.
+Camera opens directly into a large live viewfinder.
+
+The Camera rail also includes **📷 Original**, which preserves the source camera color without a Hibiscus treatment. Original is a neutral reference option and is not counted as a Camera character.
 
 Ten Camera characters provide distinct image-making responses:
 
-- **✨ Clear — Clean Modern** — clean, neutral color with restrained processing.
+- **✨ Clear — Clean Modern** — clean, neutral color with restrained but intentional tonal, color, and detail processing.
 - **🎞️ Negative — Color Negative** — warm mids, gentle contrast, and soft highlight behavior.
 - **💿 Digital — Early Digital / CCD** — crisp, cool compact-digital color and firmer contrast.
 - **⚡️ Flash — Flash Compact** — punchy direct-flash energy and separated ambient shadows.

@@ -30,6 +30,23 @@
         }
       }
     },
+    "NSMicrophoneUsageDescription" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hibiscus uses the microphone only when you choose to capture a Live Photo with sound."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hibiscus 仅在你选择拍摄带声音的实况照片时使用麦克风。"
+          }
+        }
+      }
+    },
     "NSPhotoLibraryAddUsageDescription" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -43,6 +60,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Hibiscus 将新的调色照片保存到你的照片图库。"
+          }
+        }
+      }
+    },
+    "NSPhotoLibraryUsageDescription" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hibiscus reads selected Live Photo resources so it can preserve and grade their motion."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hibiscus 会读取你选择的实况照片资源，以保留动态效果并进行调色。"
           }
         }
       }

@@ -44,8 +44,13 @@ nonisolated struct PolaroidComposition: Sendable {
 nonisolated struct PaletteComposition: Sendable {
     var selectedIndices: [Int]
     var showsHexCodes: Bool
+    var showsMark: Bool
 
-    static let standard = PaletteComposition(selectedIndices: Array(0..<5), showsHexCodes: false)
+    static let standard = PaletteComposition(
+        selectedIndices: Array(0..<5),
+        showsHexCodes: false,
+        showsMark: true
+    )
 }
 
 nonisolated enum PhotoMetadataExtractor {
@@ -295,7 +300,7 @@ nonisolated enum HibiscusExportRenderer {
         let ratio = image.size.width / max(1, image.size.height)
         let photoHeight = max(width * 0.55, min(width * 1.8, width / max(0.01, ratio)))
         let colorHeight: CGFloat = 150
-        let brandHeight: CGFloat = 180
+        let brandHeight: CGFloat = composition.showsMark ? 180 : 0
         let footerHeight = colorHeight + brandHeight
         let canvas = CGSize(width: width, height: photoHeight + footerHeight)
         let candidates = PaletteAnalyzer.colors(from: image, count: 5)
@@ -337,13 +342,15 @@ nonisolated enum HibiscusExportRenderer {
                 }
             }
 
-            let brandArea = CGRect(x: 0, y: photoHeight + colorHeight, width: width, height: brandHeight)
-            drawBrandMark(
-                centeredAt: CGPoint(x: brandArea.midX, y: brandArea.midY),
-                iconSize: width * 0.042,
-                spacing: width * 0.006,
-                fontSize: width * 0.019
-            )
+            if composition.showsMark {
+                let brandArea = CGRect(x: 0, y: photoHeight + colorHeight, width: width, height: brandHeight)
+                drawBrandMark(
+                    centeredAt: CGPoint(x: brandArea.midX, y: brandArea.midY),
+                    iconSize: width * 0.042,
+                    spacing: width * 0.006,
+                    fontSize: width * 0.019
+                )
+            }
         }
     }
 

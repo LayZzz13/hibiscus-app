@@ -4,6 +4,7 @@ struct ContentView: View {
     @State private var destination: AppDestination = .camera
     @StateObject private var preferences: AppPreferences
     @StateObject private var gradeStore: GradeStore
+    @StateObject private var savedLooksStore: SavedLooksStore
 #if DEBUG && targetEnvironment(simulator)
     @StateObject private var simulatorDemoMode: SimulatorDemoMode
 #endif
@@ -12,6 +13,7 @@ struct ContentView: View {
         let preferences = AppPreferences()
         _preferences = StateObject(wrappedValue: preferences)
         _gradeStore = StateObject(wrappedValue: GradeStore(preferences: preferences))
+        _savedLooksStore = StateObject(wrappedValue: SavedLooksStore())
 #if DEBUG && targetEnvironment(simulator)
         _simulatorDemoMode = StateObject(wrappedValue: SimulatorDemoMode())
 #endif
@@ -43,11 +45,8 @@ struct ContentView: View {
 
     private var appTabs: some View {
         TabView(selection: $destination) {
-            CameraView(preferences: preferences, isActive: destination == .camera) { image, character, date in
-                gradeStore.load(
-                    image,
-                    metadata: PhotoMetadata(date: date, location: nil, cameraCharacter: character)
-                )
+            CameraView(preferences: preferences, isActive: destination == .camera) { item in
+                gradeStore.loadBatch([item], replacing: true)
                 destination = .grade
             }
             .tag(AppDestination.camera)
@@ -59,7 +58,12 @@ struct ContentView: View {
                 }
             }
 
-            GradeView(store: gradeStore, preferences: preferences, isActive: destination == .grade)
+            GradeView(
+                store: gradeStore,
+                preferences: preferences,
+                savedLooks: savedLooksStore,
+                isActive: destination == .grade
+            )
                 .tag(AppDestination.grade)
                 .tabItem {
                     Label {

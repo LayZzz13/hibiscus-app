@@ -43,7 +43,10 @@ struct StatusPill: View {
             .padding(.vertical, 9)
             .hibiscusGlass(tint: .black.opacity(0.35), in: Capsule())
             .padding()
-            .transition(.move(edge: .top).combined(with: .opacity))
+            .transition(.asymmetric(
+                insertion: .opacity.combined(with: .scale(scale: 0.96, anchor: .top)),
+                removal: .opacity.combined(with: .scale(scale: 0.92, anchor: .top))
+            ))
     }
 }
 

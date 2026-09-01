@@ -3,6 +3,7 @@ import Foundation
 
 nonisolated enum DefaultCameraPreference: String, CaseIterable, Identifiable, Sendable {
     case lastUsed = "Last Used"
+    case original = "Original"
     case clear = "Clear"
 
     var id: Self { self }
@@ -10,16 +11,28 @@ nonisolated enum DefaultCameraPreference: String, CaseIterable, Identifiable, Se
     var displayName: String {
         switch self {
         case .lastUsed: "Last Used"
+        case .original: "Original"
         case .clear: "Clear"
         }
     }
+}
+
+nonisolated enum DefaultLivePhotoPreference: String, CaseIterable, Identifiable, Sendable {
+    case off = "Off"
+    case on = "On"
+
+    var id: Self { self }
 }
 
 @MainActor
 final class AppPreferences: ObservableObject {
     @Published var cameraGridEnabled: Bool { didSet { save(cameraGridEnabled, for: .cameraGridEnabled) } }
     @Published var defaultCamera: DefaultCameraPreference { didSet { save(defaultCamera.rawValue, for: .defaultCamera) } }
+    @Published var defaultLivePhoto: DefaultLivePhotoPreference {
+        didSet { save(defaultLivePhoto.rawValue, for: .defaultLivePhoto) }
+    }
     @Published var defaultAspectRatio: CameraAspectRatio { didSet { save(defaultAspectRatio.rawValue, for: .defaultAspectRatio) } }
+    @Published var autoSaveCaptures: Bool { didSet { save(autoSaveCaptures, for: .autoSaveCaptures) } }
     @Published var rememberExposure: Bool {
         didSet {
             save(rememberExposure, for: .rememberExposure)
@@ -29,6 +42,7 @@ final class AppPreferences: ObservableObject {
     @Published var rememberLastStyle: Bool { didSet { save(rememberLastStyle, for: .rememberLastStyle) } }
     @Published var autoAccent: Bool { didSet { save(autoAccent, for: .autoAccent) } }
     @Published var resetEditsForNewPhoto: Bool { didSet { save(resetEditsForNewPhoto, for: .resetEditsForNewPhoto) } }
+    @Published var experimentalEnhance: Bool { didSet { save(experimentalEnhance, for: .experimentalEnhance) } }
     @Published var preserveMetadata: Bool { didSet { save(preserveMetadata, for: .preserveMetadata) } }
     @Published var includeLocation: Bool { didSet { save(includeLocation, for: .includeLocation) } }
     @Published var polaroidMetadata: Bool { didSet { save(polaroidMetadata, for: .polaroidMetadata) } }
@@ -42,8 +56,8 @@ final class AppPreferences: ObservableObject {
         }
     }
 
-    var lastCameraCharacter: CameraCharacter {
-        didSet { save(lastCameraCharacter.rawValue, for: .lastCameraCharacter) }
+    var lastCameraSelection: CameraSelection {
+        didSet { save(lastCameraSelection.storageValue, for: .lastCameraSelection) }
     }
     var lastExposure: Double {
         didSet { save(lastExposure, for: .lastExposure) }
@@ -62,14 +76,19 @@ final class AppPreferences: ObservableObject {
         let storedDefaultCamera = defaults.string(forKey: Key.defaultCamera.rawValue)
         defaultCamera = storedDefaultCamera == "Alpha"
             ? .clear
-            : DefaultCameraPreference(rawValue: storedDefaultCamera ?? "") ?? .lastUsed
+            : DefaultCameraPreference(rawValue: storedDefaultCamera ?? "") ?? .original
+        defaultLivePhoto = DefaultLivePhotoPreference(
+            rawValue: defaults.string(forKey: Key.defaultLivePhoto.rawValue) ?? ""
+        ) ?? .off
         defaultAspectRatio = CameraAspectRatio(
             rawValue: defaults.string(forKey: Key.defaultAspectRatio.rawValue) ?? ""
         ) ?? .standard
+        autoSaveCaptures = defaults.object(forKey: Key.autoSaveCaptures.rawValue) as? Bool ?? true
         rememberExposure = defaults.object(forKey: Key.rememberExposure.rawValue) as? Bool ?? false
         rememberLastStyle = defaults.object(forKey: Key.rememberLastStyle.rawValue) as? Bool ?? true
         autoAccent = defaults.object(forKey: Key.autoAccent.rawValue) as? Bool ?? true
         resetEditsForNewPhoto = defaults.object(forKey: Key.resetEditsForNewPhoto.rawValue) as? Bool ?? true
+        experimentalEnhance = defaults.object(forKey: Key.experimentalEnhance.rawValue) as? Bool ?? false
         preserveMetadata = defaults.object(forKey: Key.preserveMetadata.rawValue) as? Bool ?? true
         includeLocation = defaults.object(forKey: Key.includeLocation.rawValue) as? Bool ?? true
         polaroidMetadata = defaults.object(forKey: Key.polaroidMetadata.rawValue) as? Bool ?? false
@@ -77,9 +96,12 @@ final class AppPreferences: ObservableObject {
         exploreMoreAfterExport = defaults.object(forKey: Key.exploreMoreAfterExport.rawValue) as? Bool ?? true
         exploreMoreDismissedAt = defaults.object(forKey: Key.exploreMoreDismissedAt.rawValue) as? Date
         exploreMoreOpenedAt = defaults.object(forKey: Key.exploreMoreOpenedAt.rawValue) as? Date
-        lastCameraCharacter = CameraCharacter(
+        let formerCharacter = CameraCharacter(
             rawValue: defaults.string(forKey: Key.lastCameraCharacter.rawValue) ?? ""
         ) ?? .alpha
+        lastCameraSelection = CameraSelection(
+            storageValue: defaults.string(forKey: Key.lastCameraSelection.rawValue) ?? ""
+        ) ?? .character(formerCharacter)
         lastExposure = defaults.object(forKey: Key.lastExposure.rawValue) as? Double ?? 0
         lastGradeStyle = GradeStyle(
             rawValue: defaults.string(forKey: Key.lastGradeStyle.rawValue) ?? ""
@@ -125,11 +147,14 @@ final class AppPreferences: ObservableObject {
     private enum Key: String {
         case cameraGridEnabled = "settings.camera.grid"
         case defaultCamera = "settings.camera.defaultCharacter"
+        case defaultLivePhoto = "settings.camera.defaultLivePhoto"
         case defaultAspectRatio = "settings.camera.defaultAspectRatio"
+        case autoSaveCaptures = "settings.camera.autoSaveCaptures"
         case rememberExposure = "settings.camera.rememberExposure"
         case rememberLastStyle = "settings.grade.rememberLastStyle"
         case autoAccent = "settings.grade.autoAccent"
         case resetEditsForNewPhoto = "settings.grade.resetEditsForNewPhoto"
+        case experimentalEnhance = "settings.grade.experimentalEnhance"
         case preserveMetadata = "settings.export.preserveMetadata"
         case includeLocation = "settings.export.includeLocation"
         case polaroidMetadata = "settings.export.polaroidMetadata"
@@ -138,6 +163,7 @@ final class AppPreferences: ObservableObject {
         case exploreMoreDismissedAt = "state.discovery.exploreMoreDismissedAt"
         case exploreMoreOpenedAt = "state.discovery.exploreMoreOpenedAt"
         case lastCameraCharacter = "state.camera.lastCharacter"
+        case lastCameraSelection = "state.camera.lastSelection"
         case lastExposure = "state.camera.lastExposure"
         case lastGradeStyle = "state.grade.lastStyle"
     }

@@ -4,6 +4,8 @@ This document defines the intended photographic identity and behavior of the ten
 
 These Camera characters are original photographic profiles inspired by broad imaging characteristics such as color-negative film, compact digital cameras, direct flash, instant photography, and monochrome photography. They are not intended to reproduce any specific commercial camera, film stock, sensor, or historical product exactly.
 
+The Camera selector also includes **📷 Original**, an unfiltered reference option that preserves the source camera color. Original is not a Camera character and is not included in the ten profiles documented below. **✨ Clear** remains a deliberately restrained photographic profile with subtle color, tonal, highlight, and detail shaping; it is not the same as Original.
+
 Camera and Grade serve different creative roles:
 
 - **Camera** describes how the image feels captured.

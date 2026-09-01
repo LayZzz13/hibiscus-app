@@ -77,9 +77,24 @@ struct SettingsView: View {
                         }
                     }
 
+                    Picker("Default Live Photo", selection: $preferences.defaultLivePhoto) {
+                        ForEach(DefaultLivePhotoPreference.allCases) { option in
+                            Text(LocalizedStringKey(option.rawValue)).tag(option)
+                        }
+                    }
+
                     Picker("Default Aspect Ratio", selection: $preferences.defaultAspectRatio) {
                         ForEach(CameraAspectRatio.allCases) { ratio in
                             Text(ratio.rawValue).tag(ratio)
+                        }
+                    }
+
+                    Toggle(isOn: $preferences.autoSaveCaptures) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Auto Save Captures")
+                            Text("Automatically save photos after capture.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
                     }
 
@@ -90,6 +105,14 @@ struct SettingsView: View {
                     Toggle("Remember Last Style", isOn: $preferences.rememberLastStyle)
                     Toggle("Auto Accent", isOn: $preferences.autoAccent)
                     Toggle("Reset Edits for New Photo", isOn: $preferences.resetEditsForNewPhoto)
+                    Toggle(isOn: $preferences.experimentalEnhance) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Experimental Enhance")
+                            Text("Experimental automatic photo correction.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
 
                 Section("Export") {
@@ -195,32 +218,29 @@ struct SettingsView: View {
                     .buttonStyle(.plain)
                     .tint(.primary)
 
-                    NavigationLink {
-                        SettingsInformationView(
+                    Button {
+                        openURL(HibiscusLinks.privacy)
+                    } label: {
+                        SettingsRow(
                             title: "Privacy",
-                            message: "Hibiscus processes camera and grading data locally. Photo access is used only when you choose to import or save an image."
+                            subtitle: "View Privacy Policy",
+                            showsExternalLinkIndicator: true
                         )
-                    } label: {
-                        Text("Privacy")
                     }
+                    .buttonStyle(.plain)
+                    .tint(.primary)
 
-                    NavigationLink {
-                        SettingsInformationView(
+                    Button {
+                        openURL(HibiscusLinks.terms)
+                    } label: {
+                        SettingsRow(
                             title: "Terms of Service",
-                            message: "Hibiscus is provided subject to the terms that accompany its distribution. The full Terms of Service will appear here when published."
+                            subtitle: "View Terms of Service",
+                            showsExternalLinkIndicator: true
                         )
-                    } label: {
-                        Text("Terms of Service")
                     }
-
-                    NavigationLink {
-                        SettingsInformationView(
-                            title: "Licenses",
-                            message: "Hibiscus uses Apple system frameworks. Additional open-source acknowledgements will appear here when applicable."
-                        )
-                    } label: {
-                        Text("Licenses")
-                    }
+                    .buttonStyle(.plain)
+                    .tint(.primary)
                 }
             }
             .navigationTitle("Settings")
@@ -386,19 +406,5 @@ private struct SettingsRow: View {
             }
         }
         .contentShape(Rectangle())
-    }
-}
-
-private struct SettingsInformationView: View {
-    let title: LocalizedStringKey
-    let message: LocalizedStringKey
-
-    var body: some View {
-        List {
-            Text(message)
-                .foregroundStyle(.secondary)
-        }
-        .navigationTitle(title)
-        .navigationBarTitleDisplayMode(.inline)
     }
 }

@@ -1,21 +1,34 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "" : {
+
+    },
+    "(Static)" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "（静态）"
+          }
+        }
+      }
+    },
+    "%@ Look" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 效果"
+          }
+        }
+      }
+    },
     "%lld" : {
 
     },
     "%lld MP" : {
 
-    },
-    "%lld MP · %@ · %@" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "%1$lld MP · %2$@ · %3$@"
-          }
-        }
-      }
     },
     "%lld selected" : {
       "localizations" : {
@@ -130,6 +143,16 @@
         }
       }
     },
+    "Allow full Photos access to preserve Live Photos." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请允许完整的照片访问权限以保留实况照片。"
+          }
+        }
+      }
+    },
     "Allow photo access in Settings to save." : {
       "localizations" : {
         "zh-Hans" : {
@@ -181,12 +204,32 @@
         }
       }
     },
+    "Auto Save Captures" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自动保存拍摄内容"
+          }
+        }
+      }
+    },
     "Automatic Accent" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "自动强调色"
+          }
+        }
+      }
+    },
+    "Automatically save photos after capture." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "拍摄后自动保存照片。"
           }
         }
       }
@@ -251,12 +294,56 @@
         }
       }
     },
+    "Capture" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "拍摄"
+          }
+        }
+      }
+    },
+    "Capturing Live Photo" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在拍摄实况照片"
+          }
+        }
+      }
+    },
+    "Character Pad" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "相机色彩板"
+          }
+        }
+      }
+    },
     "Choose 1–5 colors" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "选择 1–5 种颜色"
+          }
+        }
+      }
+    },
+    "Choose a Camera Character first." : {
+
+    },
+    "Choose a Camera Character to use the Character Pad." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请选择一个相机角色后使用相机色彩板。"
           }
         }
       }
@@ -364,6 +451,16 @@
         }
       }
     },
+    "Couldn’t capture this Live Photo." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法拍摄这张实况照片。"
+          }
+        }
+      }
+    },
     "Couldn’t capture this photo." : {
       "localizations" : {
         "zh-Hans" : {
@@ -404,12 +501,32 @@
         }
       }
     },
+    "Couldn’t prepare this Live Photo." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法准备这张实况照片。"
+          }
+        }
+      }
+    },
     "Couldn’t render this export." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "无法生成此导出内容。"
+          }
+        }
+      }
+    },
+    "Couldn’t render this Live Photo." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法处理这张实况照片。"
           }
         }
       }
@@ -424,12 +541,32 @@
         }
       }
     },
+    "Couldn’t save these Live Photos." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法保存这些实况照片。"
+          }
+        }
+      }
+    },
     "Couldn’t save these photos." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "无法保存这些照片。"
+          }
+        }
+      }
+    },
+    "Couldn’t save this Live Photo." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法保存这张实况照片。"
           }
         }
       }
@@ -487,6 +624,26 @@
         }
       }
     },
+    "Default Live Photo" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "默认实况照片"
+          }
+        }
+      }
+    },
+    "Delete" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "删除"
+          }
+        }
+      }
+    },
     "Developing" : {
       "localizations" : {
         "zh-Hans" : {
@@ -538,6 +695,16 @@
         }
       }
     },
+    "Drag to vary this Camera Character. Double-tap to reset." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "拖动以调整当前相机风格，轻点两下即可重置。"
+          }
+        }
+      }
+    },
     "Draw anywhere. The same drawing is added to all %lld cards." : {
       "localizations" : {
         "zh-Hans" : {
@@ -585,6 +752,47 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "English"
+          }
+        }
+      }
+    },
+    "Enhance" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "增强"
+          }
+        }
+      }
+    },
+    "Enhanced Original" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "增强后的原图"
+          }
+        }
+      }
+    },
+    "Experimental automatic photo correction." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "实验性自动照片校正。"
+          }
+        }
+      }
+    },
+    "Experimental Enhance" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "实验性增强"
           }
         }
       }
@@ -780,6 +988,7 @@
       }
     },
     "Hibiscus is provided subject to the terms that accompany its distribution. The full Terms of Service will appear here when published." : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -800,6 +1009,7 @@
       }
     },
     "Hibiscus processes camera and grading data locally. Photo access is used only when you choose to import or save an image." : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -810,6 +1020,7 @@
       }
     },
     "Hibiscus uses Apple system frameworks. Additional open-source acknowledgements will appear here when applicable." : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -826,6 +1037,27 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "收起"
+          }
+        }
+      }
+    },
+    "Hide Character Pad" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "隐藏相机色彩板"
+          }
+        }
+      }
+    },
+    "Include Accent" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "包含强调色"
           }
         }
       }
@@ -921,22 +1153,35 @@
         }
       }
     },
-    "Licenses" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "许可"
-          }
-        }
-      }
-    },
     "Lightness" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "明度"
+          }
+        }
+      }
+    },
+    "LIVE" : {
+
+    },
+    "Live Photo" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "实况照片"
+          }
+        }
+      }
+    },
+    "Live Photo isn’t available with the current camera configuration." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当前相机配置不支持实况照片。"
           }
         }
       }
@@ -957,6 +1202,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "LUT 名称"
+          }
+        }
+      }
+    },
+    "Microphone access is required for Live Photos." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "拍摄实况照片需要麦克风权限。"
           }
         }
       }
@@ -1013,6 +1268,19 @@
         }
       }
     },
+    "My Looks" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "我的效果"
+          }
+        }
+      }
+    },
+    "Name" : {
+
+    },
     "Night Digital" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -1024,12 +1292,32 @@
         }
       }
     },
+    "No Live Photos are selected." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未选择实况照片。"
+          }
+        }
+      }
+    },
     "No photos were imported." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "没有导入照片。"
+          }
+        }
+      }
+    },
+    "No saved looks yet" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "还没有保存的效果"
           }
         }
       }
@@ -1099,7 +1387,11 @@
         }
       }
     },
+    "Opens live Camera Character customization." : {
+
+    },
     "Original" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -1176,6 +1468,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "照片选择器"
+          }
+        }
+      }
+    },
+    "Play Live Photo" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "播放实况照片"
           }
         }
       }
@@ -1309,6 +1611,26 @@
         }
       }
     },
+    "Rename" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重命名"
+          }
+        }
+      }
+    },
+    "Rename Look" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重命名效果"
+          }
+        }
+      }
+    },
     "Rendering" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1389,6 +1711,46 @@
         }
       }
     },
+    "Save Current Look" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保存当前效果"
+          }
+        }
+      }
+    },
+    "Save Look" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保存效果"
+          }
+        }
+      }
+    },
+    "Saved" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已保存"
+          }
+        }
+      }
+    },
+    "Saved %lld Live Photos" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已保存 %lld 张实况照片"
+          }
+        }
+      }
+    },
     "Saved %lld photos" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1399,12 +1761,32 @@
         }
       }
     },
+    "Saved Live Photo" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "实况照片已保存"
+          }
+        }
+      }
+    },
     "Saved to Photos" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "已保存到照片"
+          }
+        }
+      }
+    },
+    "Saving" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在保存"
           }
         }
       }
@@ -1533,6 +1915,16 @@
         }
       }
     },
+    "Styles" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "风格"
+          }
+        }
+      }
+    },
     "Support open digital color." : {
       "localizations" : {
         "zh-Hans" : {
@@ -1604,12 +1996,33 @@
         }
       }
     },
+    "Turn Enhance off" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "关闭增强"
+          }
+        }
+      }
+    },
     "Undo grade edit" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "撤销调色编辑"
+          }
+        }
+      }
+    },
+    "Unfiltered" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无滤镜"
           }
         }
       }
@@ -1640,6 +2053,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在 GitHub 上查看 Hibiscus"
+          }
+        }
+      }
+    },
+    "View Privacy Policy" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看隐私政策"
+          }
+        }
+      }
+    },
+    "View Terms of Service" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看服务条款"
           }
         }
       }

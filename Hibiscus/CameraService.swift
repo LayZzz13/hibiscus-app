@@ -29,6 +29,7 @@ nonisolated private struct CameraLensTarget {
 final class CameraService: NSObject, ObservableObject {
     @Published private(set) var capturedImage: UIImage?
     @Published private(set) var capturedPreviewImage: UIImage?
+    @Published private(set) var capturedLivePhoto: ProcessedLivePhoto?
     @Published private(set) var capturedDate: Date?
     @Published private(set) var authorizationState: CameraAuthorizationState = .unknown
     @Published private(set) var isRunning = false
@@ -37,14 +38,23 @@ final class CameraService: NSObject, ObservableObject {
     @Published private(set) var lensLabel = "1×"
     @Published private(set) var lensOptions = [CameraLensOption(factor: 1, label: "1×")]
     @Published private(set) var exposure: Double = 0
-    @Published var selectedCharacter: CameraCharacter = .alpha {
+    @Published private(set) var characterPoint = CGPoint(x: 0.5, y: 0.5)
+    @Published private(set) var isSwitchingCamera = false
+    @Published var selectedCamera: CameraSelection = .character(.alpha) {
         didSet {
-            renderCharacter = selectedCharacter
+            if let oldCharacter = oldValue.character {
+                characterAdjustments[oldCharacter] = CameraCharacterAdjustment(point: characterPoint)
+            }
+            let character = selectedCamera.character
+            let adjustment = character.flatMap { characterAdjustments[$0] } ?? .centered
+            characterPoint = adjustment.point
+            renderCharacter = character
+            renderCharacterAdjustment = adjustment
 #if DEBUG && targetEnvironment(simulator)
             refreshSimulatorDemoPreview()
 #endif
             if !isApplyingSessionDefaults {
-                preferences.lastCameraCharacter = selectedCharacter
+                preferences.lastCameraSelection = selectedCamera
             }
         }
     }
@@ -52,6 +62,9 @@ final class CameraService: NSObject, ObservableObject {
         didSet { captureAspectRatio = selectedRatio.portraitRatio }
     }
     @Published var selectedTimer: CaptureTimerOption = .off
+    @Published var selectedMotion: CaptureMotionOption = .photo
+    @Published private(set) var isLivePhotoAvailable = false
+    @Published private(set) var isConfiguringLivePhoto = false
     @Published private(set) var availableMegapixels: [Int] = [12]
     @Published private(set) var availableRawMegapixels: [Int] = []
     @Published private(set) var selectedMegapixels = 12
@@ -60,7 +73,10 @@ final class CameraService: NSObject, ObservableObject {
     }
     @Published private(set) var isRAWAvailable = false
     @Published private(set) var isCapturing = false
+    @Published private(set) var isRecordingLivePhoto = false
     @Published private(set) var isProcessingCapture = false
+    @Published private(set) var isSavingCapture = false
+    @Published private(set) var didAutoSaveCapture = false
     @Published private(set) var countdown: Int?
     @Published var statusMessage: String?
 
@@ -72,10 +88,12 @@ final class CameraService: NSObject, ObservableObject {
     nonisolated private let videoQueue = DispatchQueue(label: "dev.hibiscus.camera-preview", qos: .userInteractive)
     nonisolated private let photoProcessingQueue = DispatchQueue(label: "dev.hibiscus.camera-processing", qos: .userInitiated)
     nonisolated(unsafe) private var cameraInput: AVCaptureDeviceInput?
+    nonisolated(unsafe) private var audioInput: AVCaptureDeviceInput?
     nonisolated(unsafe) private var position: AVCaptureDevice.Position = .back
     nonisolated(unsafe) private var lensFactors: [CGFloat] = [1]
     nonisolated(unsafe) private var lensIndex = 0
-    nonisolated(unsafe) private var renderCharacter: CameraCharacter = .alpha
+    nonisolated(unsafe) private var renderCharacter: CameraCharacter? = .alpha
+    nonisolated(unsafe) private var renderCharacterAdjustment = CameraCharacterAdjustment.centered
     nonisolated(unsafe) private var captureAspectRatio: CGFloat = CameraAspectRatio.standard.portraitRatio
     nonisolated(unsafe) private var captureFormat: CaptureFormatOption = .processed
     nonisolated private let resolutionLock = NSLock()
@@ -85,13 +103,27 @@ final class CameraService: NSObject, ObservableObject {
     nonisolated(unsafe) private var pendingProcessedImage: UIImage?
     nonisolated(unsafe) private var pendingPreviewImage: UIImage?
     nonisolated(unsafe) private var pendingRawData: Data?
+    nonisolated(unsafe) private var pendingLivePhotoData: Data?
+    nonisolated(unsafe) private var pendingLivePhotoMovieURL: URL?
+    nonisolated(unsafe) private var captureUsesLivePhoto = false
+    nonisolated(unsafe) private var captureCharacter: CameraCharacter? = .alpha
+    nonisolated(unsafe) private var captureCharacterAdjustment = CameraCharacterAdjustment.centered
+    nonisolated(unsafe) private var captureLiveAspectRatio = CameraAspectRatio.standard.portraitRatio
+    nonisolated(unsafe) private var captureLiveTargetMegapixels = 12
     nonisolated(unsafe) private var captureProcessingToken = UUID()
+    nonisolated(unsafe) private var acceptsPreviewFrames = true
+    nonisolated(unsafe) private var pendingCameraSwitchToken: UUID?
+    nonisolated(unsafe) private var currentPreviewRotationAngle: CGFloat = 90
     private var previewLayer: CALayer?
     private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
     private var previewRotationObservation: NSKeyValueObservation?
     private var timerTask: Task<Void, Never>?
+    private var cameraSwitchRecoveryTask: Task<Void, Never>?
     private let preferences: AppPreferences
     private var isApplyingSessionDefaults = false
+    private var shouldApplyDefaultMotionOnStart = false
+    private var didAttemptAutoSaveForCapture = false
+    private var characterAdjustments: [CameraCharacter: CameraCharacterAdjustment] = [:]
 #if DEBUG && targetEnvironment(simulator)
     nonisolated(unsafe) private var isSimulatorDemoCameraEnabled = false
     private var simulatorDemoSourceImage: UIImage?
@@ -101,11 +133,13 @@ final class CameraService: NSObject, ObservableObject {
         self.preferences = preferences
         super.init()
         isApplyingSessionDefaults = true
-        let initialCharacter = preferences.defaultCamera == .lastUsed
-            ? preferences.lastCameraCharacter
-            : .alpha
-        selectedCharacter = initialCharacter
-        renderCharacter = initialCharacter
+        let initialCamera = Self.cameraSelection(
+            for: preferences.defaultCamera,
+            lastUsed: preferences.lastCameraSelection
+        )
+        selectedCamera = initialCamera
+        renderCharacter = initialCamera.character
+        renderCharacterAdjustment = .centered
         selectedRatio = preferences.defaultAspectRatio
         captureAspectRatio = preferences.defaultAspectRatio.portraitRatio
         exposure = preferences.rememberExposure ? preferences.lastExposure : 0
@@ -115,6 +149,20 @@ final class CameraService: NSObject, ObservableObject {
         case .denied, .restricted: authorizationState = .denied
         case .notDetermined: authorizationState = .unknown
         @unknown default: authorizationState = .denied
+        }
+    }
+
+    private static func cameraSelection(
+        for preference: DefaultCameraPreference,
+        lastUsed: CameraSelection
+    ) -> CameraSelection {
+        switch preference {
+        case .lastUsed:
+            lastUsed
+        case .original:
+            .original
+        case .clear:
+            .character(.alpha)
         }
     }
 
@@ -166,15 +214,22 @@ final class CameraService: NSObject, ObservableObject {
 
     func start() {
         previewRenderer.resume()
+        shouldApplyDefaultMotionOnStart = true
         isApplyingSessionDefaults = true
-        selectedCharacter = preferences.defaultCamera == .lastUsed
-            ? preferences.lastCameraCharacter
-            : .alpha
+        selectedCamera = Self.cameraSelection(
+            for: preferences.defaultCamera,
+            lastUsed: preferences.lastCameraSelection
+        )
         selectedRatio = preferences.defaultAspectRatio
         isApplyingSessionDefaults = false
         capturedImage = nil
         capturedPreviewImage = nil
+        capturedLivePhoto?.cleanUp()
+        capturedLivePhoto = nil
         capturedDate = nil
+        isSavingCapture = false
+        didAutoSaveCapture = false
+        didAttemptAutoSaveForCapture = false
         if cameraInput != nil {
             setExposure(preferences.rememberExposure ? preferences.lastExposure : 0)
         } else if !preferences.rememberExposure {
@@ -211,6 +266,9 @@ final class CameraService: NSObject, ObservableObject {
     func stop() {
         timerTask?.cancel()
         timerTask = nil
+        cameraSwitchRecoveryTask?.cancel()
+        cameraSwitchRecoveryTask = nil
+        isSwitchingCamera = false
         countdown = nil
         previewRenderer.clear()
 #if DEBUG && targetEnvironment(simulator)
@@ -227,7 +285,7 @@ final class CameraService: NSObject, ObservableObject {
     }
 
     func capture() {
-        guard isRunning, countdown == nil, !isCapturing else { return }
+        guard isRunning, countdown == nil, !isCapturing, !isConfiguringLivePhoto else { return }
         let seconds = selectedTimer.seconds
         guard seconds > 0 else {
             captureNow()
@@ -248,16 +306,32 @@ final class CameraService: NSObject, ObservableObject {
     }
 
     private func captureNow() {
-        // Lock the most recently presented Metal frame at shutter time. Still-photo
-        // processing can then continue without the viewfinder drifting afterward.
-        previewRenderer.freeze()
+        let recordsLivePhoto = selectedMotion == .livePhoto
+            && captureFormat == .processed
+            && photoOutput.isLivePhotoCaptureEnabled
+        // A still freezes at shutter time. A Live Photo must keep presenting fresh
+        // preview frames until AVFoundation reports that motion recording ended.
+        if recordsLivePhoto {
+            isRecordingLivePhoto = true
+            previewRenderer.resume()
+        } else {
+            isRecordingLivePhoto = false
+            previewRenderer.freeze()
+        }
         isCapturing = true
         isProcessingCapture = true
         capturedDate = Date()
         pendingProcessedImage = nil
         pendingPreviewImage = nil
         pendingRawData = nil
+        pendingLivePhotoData = nil
+        if let pendingLivePhotoMovieURL { try? FileManager.default.removeItem(at: pendingLivePhotoMovieURL) }
+        pendingLivePhotoMovieURL = nil
+        captureUsesLivePhoto = recordsLivePhoto
         captureProcessingToken = UUID()
+        isSavingCapture = false
+        didAutoSaveCapture = false
+        didAttemptAutoSaveForCapture = false
 
 #if DEBUG && targetEnvironment(simulator)
         if isSimulatorDemoCameraEnabled {
@@ -291,6 +365,16 @@ final class CameraService: NSObject, ObservableObject {
             settings = AVCapturePhotoSettings(format: processedFormat)
             settings.photoQualityPrioritization = .quality
         }
+        captureCharacter = renderCharacter
+        captureCharacterAdjustment = renderCharacterAdjustment
+        captureLiveAspectRatio = captureAspectRatio
+        captureLiveTargetMegapixels = selectedTargetMegapixels()
+        if captureUsesLivePhoto {
+            let movieURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("Hibiscus-Live-Capture-\(UUID().uuidString).mov")
+            pendingLivePhotoMovieURL = movieURL
+            settings.livePhotoMovieFileURL = movieURL
+        }
         let photoDimensions = selectedPhotoDimensions()
         if photoDimensions.width > 0, photoDimensions.height > 0 {
             settings.maxPhotoDimensions = photoDimensions
@@ -312,27 +396,69 @@ final class CameraService: NSObject, ObservableObject {
     }
 
     func retake() {
-        previewRenderer.resume()
+        if let capturedPreviewImage,
+           let heldImage = ImageRenderer.sourceCIImage(capturedPreviewImage) {
+            previewRenderer.hold(heldImage)
+        } else {
+            previewRenderer.freeze()
+        }
+        let resumeToken = UUID()
+        videoQueue.sync {
+            acceptsPreviewFrames = false
+            pendingCameraSwitchToken = resumeToken
+        }
+        isSwitchingCamera = true
+        cameraSwitchRecoveryTask?.cancel()
+        cameraSwitchRecoveryTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(1.5))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            self?.recoverCameraSwitchIfNeeded(token: resumeToken)
+        }
         capturedImage = nil
         capturedPreviewImage = nil
+        capturedLivePhoto?.cleanUp()
+        capturedLivePhoto = nil
         capturedDate = nil
         pendingProcessedImage = nil
         pendingPreviewImage = nil
         pendingRawData = nil
+        pendingLivePhotoData = nil
+        if let pendingLivePhotoMovieURL { try? FileManager.default.removeItem(at: pendingLivePhotoMovieURL) }
+        pendingLivePhotoMovieURL = nil
+        captureUsesLivePhoto = false
+        isRecordingLivePhoto = false
         isProcessingCapture = false
+        isSavingCapture = false
+        didAutoSaveCapture = false
+        didAttemptAutoSaveForCapture = false
         captureProcessingToken = UUID()
         statusMessage = nil
 #if DEBUG && targetEnvironment(simulator)
         if isSimulatorDemoCameraEnabled {
+            isSwitchingCamera = false
+            videoQueue.async { [weak self] in
+                self?.pendingCameraSwitchToken = nil
+                self?.acceptsPreviewFrames = true
+            }
             startSimulatorDemoCamera()
             return
         }
 #endif
-        startSessionOnly()
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            if let device = self.cameraInput?.device {
+                self.configureVideoConnectionFallback(for: device)
+            }
+            self.startSessionOnlyFromQueue()
+        }
     }
 
     func switchCamera() {
-        guard capturedImage == nil else { return }
+        guard capturedImage == nil, !isSwitchingCamera else { return }
 #if DEBUG && targetEnvironment(simulator)
         if isSimulatorDemoCameraEnabled {
             position = position == .back ? .front : .back
@@ -340,9 +466,47 @@ final class CameraService: NSObject, ObservableObject {
             return
         }
 #endif
+        previewRenderer.freeze()
+        isSwitchingCamera = true
+        let switchToken = UUID()
+        cameraSwitchRecoveryTask?.cancel()
+        cameraSwitchRecoveryTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(1.5))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            self?.recoverCameraSwitchIfNeeded(token: switchToken)
+        }
         position = position == .back ? .front : .back
-        sessionQueue.async { [weak self] in self?.replaceCameraInput() }
+        videoQueue.async { [weak self] in
+            guard let self else { return }
+            self.acceptsPreviewFrames = false
+            self.pendingCameraSwitchToken = switchToken
+            self.sessionQueue.async { [weak self] in
+                self?.replaceCameraInput(switchToken: switchToken)
+            }
+        }
         UISelectionFeedbackGenerator().selectionChanged()
+    }
+
+    func updateCharacterPoint(_ point: CGPoint) {
+        guard let selectedCharacter = selectedCamera.character else { return }
+        let bounded = CGPoint(x: min(1, max(0, point.x)), y: min(1, max(0, point.y)))
+        guard characterPoint != bounded else { return }
+        characterPoint = bounded
+        let adjustment = CameraCharacterAdjustment(point: bounded)
+        characterAdjustments[selectedCharacter] = adjustment
+        renderCharacterAdjustment = adjustment
+#if DEBUG && targetEnvironment(simulator)
+        refreshSimulatorDemoPreview()
+#endif
+    }
+
+    func resetCharacterPoint() {
+        updateCharacterPoint(CGPoint(x: 0.5, y: 0.5))
+        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
     }
 
     func selectLens(_ option: CameraLensOption) {
@@ -399,10 +563,14 @@ final class CameraService: NSObject, ObservableObject {
     }
 
     func attachPreviewLayer(_ layer: CALayer) {
-        guard previewLayer !== layer else { return }
+        let layerChanged = previewLayer !== layer
         previewLayer = layer
-        if let device = cameraInput?.device {
-            configureRotationCoordinator(for: device)
+        if let device = cameraInput?.device,
+           layerChanged || pendingCameraSwitchToken != nil {
+            configureRotationCoordinator(
+                for: device,
+                switchToken: pendingCameraSwitchToken
+            )
         }
     }
 
@@ -425,17 +593,121 @@ final class CameraService: NSObject, ObservableObject {
         resolutionLock.unlock()
         selectedFormat = format
         selectedMegapixels = megapixels
+        if format == .raw { selectedMotion = .photo }
         UISelectionFeedbackGenerator().selectionChanged()
     }
 
+    func selectMotion(_ option: CaptureMotionOption) {
+        guard selectedFormat == .processed || option == .photo else { return }
+        guard !isConfiguringLivePhoto else { return }
+        if option == .photo {
+            selectedMotion = .photo
+            restoreStillPhotoPipeline()
+            UISelectionFeedbackGenerator().selectionChanged()
+            return
+        }
+        if isLivePhotoAvailable {
+            selectedMotion = .livePhoto
+            UISelectionFeedbackGenerator().selectionChanged()
+            return
+        }
+        prepareLivePhotoCapture()
+    }
+
+    func toggleLivePhoto() {
+        selectMotion(selectedMotion == .livePhoto ? .photo : .livePhoto)
+    }
+
+    private func prepareLivePhotoCapture() {
+        isConfiguringLivePhoto = true
+        statusMessage = nil
+        previewRenderer.freeze()
+        let service = self
+        let finishAuthorization: @Sendable (Bool) -> Void = { granted in
+            Task { @MainActor in
+                guard granted else {
+                    service.isConfiguringLivePhoto = false
+                    service.previewRenderer.resume()
+                    service.selectedMotion = .photo
+                    service.statusMessage = L10n.string("Microphone access is required for Live Photos.")
+                    return
+                }
+                service.sessionQueue.async { [weak service] in
+                    service?.configureLivePhotoPipeline()
+                }
+            }
+        }
+
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            finishAuthorization(true)
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .audio, completionHandler: finishAuthorization)
+        case .denied, .restricted:
+            finishAuthorization(false)
+        @unknown default:
+            finishAuthorization(false)
+        }
+    }
+
+    private func restoreStillPhotoPipeline() {
+        isConfiguringLivePhoto = true
+        previewRenderer.freeze()
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            let wasRunning = self.session.isRunning
+            if wasRunning { self.session.stopRunning() }
+            self.session.beginConfiguration()
+            self.photoOutput.isLivePhotoCaptureEnabled = false
+            self.photoOutput.isLivePhotoAutoTrimmingEnabled = false
+            if let device = self.cameraInput?.device {
+                self.selectHighestResolutionPhotoFormat(for: device)
+                self.updateMaximumPhotoDimensions(for: device)
+            }
+            self.session.commitConfiguration()
+            if wasRunning { self.session.startRunning() }
+            self.updateLivePhotoAvailability()
+            Task { @MainActor in
+                self.isRunning = self.session.isRunning
+                self.isConfiguringLivePhoto = false
+                self.previewRenderer.resume()
+            }
+        }
+    }
+
     func saveCapture() {
-        guard let capturedImage else { return }
+        saveCapture(automatic: false)
+    }
+
+    private func saveCapture(automatic: Bool) {
+        guard !isSavingCapture else { return }
+        isSavingCapture = true
+        if let capturedLivePhoto {
+            LivePhotoLibrarySaver.save([capturedLivePhoto], cleanUpAfterSave: false) { [weak self] success in
+                guard let self else { return }
+                self.finishCaptureSave(
+                    success: success,
+                    automatic: automatic,
+                    successMessage: L10n.string("Saved Live Photo"),
+                    failureMessage: L10n.string("Couldn’t save this Live Photo.")
+                )
+            }
+            return
+        }
+        guard let capturedImage else {
+            isSavingCapture = false
+            return
+        }
         let rawData = pendingRawData
         let processedData = capturedImage.jpegData(compressionQuality: 0.98)
         PHPhotoLibrary.requestAuthorization(for: .addOnly) { [weak self] status in
             guard let service = self else { return }
             guard status == .authorized || status == .limited else {
-                Task { @MainActor in service.statusMessage = L10n.string("Allow photo access in Settings to save.") }
+                Task { @MainActor in
+                    service.isSavingCapture = false
+                    service.didAutoSaveCapture = false
+                    service.statusMessage = L10n.string("Allow photo access in Settings to save.")
+                }
                 return
             }
             PHPhotoLibrary.shared().performChanges {
@@ -448,13 +720,51 @@ final class CameraService: NSObject, ObservableObject {
                 }
             } completionHandler: { success, _ in
                 Task { @MainActor in
-                    service.statusMessage = success
-                        ? L10n.string("Saved to Photos")
-                        : L10n.string("Couldn’t save this photo.")
-                    if success { UINotificationFeedbackGenerator().notificationOccurred(.success) }
+                    service.finishCaptureSave(
+                        success: success,
+                        automatic: automatic,
+                        successMessage: L10n.string("Saved to Photos"),
+                        failureMessage: L10n.string("Couldn’t save this photo.")
+                    )
                 }
             }
         }
+    }
+
+    private func finishCaptureSave(
+        success: Bool,
+        automatic: Bool,
+        successMessage: String,
+        failureMessage: String
+    ) {
+        isSavingCapture = false
+        didAutoSaveCapture = automatic && success
+        statusMessage = success
+            ? (automatic ? L10n.string("Saved") : successMessage)
+            : failureMessage
+        if success { UINotificationFeedbackGenerator().notificationOccurred(.success) }
+    }
+
+    private func autoSaveCaptureIfReady(token: UUID) {
+        guard preferences.autoSaveCaptures,
+              captureProcessingToken == token,
+              !didAttemptAutoSaveForCapture,
+              !isProcessingCapture,
+              capturedImage != nil,
+              !captureUsesLivePhoto || capturedLivePhoto != nil else { return }
+        didAttemptAutoSaveForCapture = true
+        saveCapture(automatic: true)
+    }
+
+    func takeCapturedLivePhotoSource() -> LivePhotoSource? {
+        guard let capturedLivePhoto else { return nil }
+        self.capturedLivePhoto = nil
+        return LivePhotoSource(
+            directoryURL: capturedLivePhoto.directoryURL,
+            stillURL: capturedLivePhoto.stillURL,
+            motionURL: capturedLivePhoto.motionURL,
+            assetIdentifier: nil
+        )
     }
 
 #if DEBUG && targetEnvironment(simulator)
@@ -479,7 +789,11 @@ final class CameraService: NSObject, ObservableObject {
             ])
         }
         previewRenderer.resume()
-        previewRenderer.submit(source, character: selectedCharacter)
+        previewRenderer.submit(
+            source,
+            character: selectedCamera.character,
+            adjustment: CameraCharacterAdjustment(point: characterPoint)
+        )
     }
 
     private func captureSimulatorDemoPhoto() {
@@ -491,10 +805,11 @@ final class CameraService: NSObject, ObservableObject {
             return
         }
 
-        let character = selectedCharacter
+        let character = selectedCamera.character
         let aspectRatio = captureAspectRatio
         let targetMegapixels = selectedMegapixels
         let inputExposureEV = exposure
+        let adjustment = CameraCharacterAdjustment(point: characterPoint)
         let token = captureProcessingToken
         UIImpactFeedbackGenerator(style: .rigid).impactOccurred(intensity: 0.9)
 
@@ -503,6 +818,7 @@ final class CameraService: NSObject, ObservableObject {
                 ImageRenderer.cameraImage(
                     sourceImage,
                     character: character,
+                    adjustment: adjustment,
                     aspectRatio: aspectRatio,
                     targetMegapixels: min(2, targetMegapixels),
                     inputExposureEV: inputExposureEV
@@ -522,6 +838,7 @@ final class CameraService: NSObject, ObservableObject {
                 ImageRenderer.cameraImage(
                     sourceImage,
                     character: character,
+                    adjustment: adjustment,
                     aspectRatio: aspectRatio,
                     targetMegapixels: targetMegapixels,
                     inputExposureEV: inputExposureEV
@@ -533,6 +850,7 @@ final class CameraService: NSObject, ObservableObject {
                 self.capturedImage = processed
                 self.capturedPreviewImage = processed
                 self.isProcessingCapture = false
+                self.autoSaveCaptureIfReady(token: token)
             }
         }
     }
@@ -550,13 +868,38 @@ final class CameraService: NSObject, ObservableObject {
             }
             self.refreshRAWAvailability()
             self.startSessionOnlyFromQueue()
+            Task { @MainActor in
+                self.applyDefaultMotionIfNeeded()
+            }
+        }
+    }
+
+    private func applyDefaultMotionIfNeeded() {
+        guard shouldApplyDefaultMotionOnStart else { return }
+        shouldApplyDefaultMotionOnStart = false
+        switch preferences.defaultLivePhoto {
+        case .off:
+            if selectedMotion == .livePhoto {
+                selectMotion(.photo)
+            } else {
+                selectedMotion = .photo
+            }
+        case .on:
+            selectMotion(.livePhoto)
         }
     }
 
     nonisolated private func configureSession() {
         session.beginConfiguration()
         session.sessionPreset = .photo
-        defer { session.commitConfiguration() }
+        var didConfigureSession = false
+        defer {
+            session.commitConfiguration()
+            if didConfigureSession {
+                configureLivePhotoOutputIfPossible()
+                updateLivePhotoAvailability()
+            }
+        }
 
         guard let device = preferredDevice(position: position) else {
             Task { @MainActor in self.authorizationState = .unavailable }
@@ -590,9 +933,13 @@ final class CameraService: NSObject, ObservableObject {
                 enableAppleProRAWIfSupported()
                 updateMaximumPhotoDimensions(for: device)
             }
+            if AVCaptureDevice.authorizationStatus(for: .audio) == .authorized {
+                _ = addAudioInputDuringConfiguration()
+            }
 
             configureVideoConnectionFallback(for: device)
             updateDeviceState(device)
+            didConfigureSession = true
         } catch {
             Task { @MainActor in
                 self.authorizationState = .unavailable
@@ -601,23 +948,32 @@ final class CameraService: NSObject, ObservableObject {
         }
     }
 
-    nonisolated private func replaceCameraInput() {
-        guard let device = preferredDevice(position: position) else { return }
-        replaceCameraInput(with: device)
+    nonisolated private func replaceCameraInput(switchToken: UUID? = nil) {
+        guard let device = preferredDevice(position: position) else {
+            finishCameraSwitchFailure(token: switchToken)
+            Task { @MainActor in
+                self.statusMessage = L10n.string("Couldn’t switch cameras.")
+            }
+            return
+        }
+        replaceCameraInput(with: device, switchToken: switchToken)
     }
 
     nonisolated private func replaceCameraInput(
         with device: AVCaptureDevice,
         requestedZoomFactor: CGFloat? = nil,
-        requestedDisplayFactor: CGFloat? = nil
+        requestedDisplayFactor: CGFloat? = nil,
+        switchToken: UUID? = nil
     ) {
         session.beginConfiguration()
         if let cameraInput { session.removeInput(cameraInput) }
+        var didReplaceInput = false
         do {
             let newInput = try AVCaptureDeviceInput(device: device)
             if session.canAddInput(newInput) {
                 session.addInput(newInput)
                 cameraInput = newInput
+                didReplaceInput = true
                 selectHighestResolutionPhotoFormat(for: device)
                 enableAppleProRAWIfSupported()
                 updateMaximumPhotoDimensions(for: device)
@@ -633,9 +989,15 @@ final class CameraService: NSObject, ObservableObject {
             }
         }
         session.commitConfiguration()
+        guard didReplaceInput else {
+            finishCameraSwitchFailure(token: switchToken)
+            return
+        }
         refreshRAWAvailability()
+        configureLivePhotoOutputIfPossible()
+        updateLivePhotoAvailability()
         Task { @MainActor in
-            self.configureRotationCoordinator(for: device)
+            self.configureRotationCoordinator(for: device, switchToken: switchToken)
             self.isRunning = self.session.isRunning
         }
     }
@@ -654,6 +1016,79 @@ final class CameraService: NSObject, ObservableObject {
         }
     }
 
+    nonisolated private func updateLivePhotoAvailability() {
+        let available = photoOutput.isLivePhotoCaptureSupported && photoOutput.isLivePhotoCaptureEnabled
+        Task { @MainActor in
+#if DEBUG && targetEnvironment(simulator)
+            guard !self.isSimulatorDemoCameraEnabled else { return }
+#endif
+            self.isLivePhotoAvailable = available
+            if !available { self.selectedMotion = .photo }
+        }
+    }
+
+    nonisolated private func configureLivePhotoOutputIfPossible() {
+        let enabled = audioInput != nil && photoOutput.isLivePhotoCaptureSupported
+        if enabled && !photoOutput.isLivePhotoCaptureEnabled {
+            photoOutput.isLivePhotoCaptureEnabled = true
+        }
+        photoOutput.isLivePhotoAutoTrimmingEnabled = enabled
+    }
+
+    nonisolated private func addAudioInputDuringConfiguration() -> Bool {
+        if audioInput != nil { return true }
+        guard let device = AVCaptureDevice.default(for: .audio),
+              let input = try? AVCaptureDeviceInput(device: device),
+              session.canAddInput(input) else { return false }
+        session.addInput(input)
+        audioInput = input
+        return true
+    }
+
+    nonisolated private func configureLivePhotoPipeline() {
+        let wasRunning = session.isRunning
+        if wasRunning { session.stopRunning() }
+
+        // A manually selected high-resolution activeFormat places the session
+        // in input-priority mode and can make Live Photo unavailable. Return
+        // configuration ownership to AVFoundation's native photo preset before
+        // querying and enabling Live Photo support.
+        session.beginConfiguration()
+        let hasAudio = addAudioInputDuringConfiguration()
+        let hasCompatiblePreset = session.canSetSessionPreset(.photo)
+        if hasCompatiblePreset {
+            session.sessionPreset = .photo
+        }
+        session.commitConfiguration()
+
+        let available: Bool
+        if hasAudio, hasCompatiblePreset, photoOutput.isLivePhotoCaptureSupported {
+            configureLivePhotoOutputIfPossible()
+            if photoOutput.isLivePhotoCaptureEnabled, let device = cameraInput?.device {
+                updateMaximumPhotoDimensions(for: device)
+            }
+            available = photoOutput.isLivePhotoCaptureSupported
+                && photoOutput.isLivePhotoCaptureEnabled
+        } else {
+            available = false
+        }
+        if wasRunning { session.startRunning() }
+
+        Task { @MainActor in
+            self.isRunning = self.session.isRunning
+            self.isLivePhotoAvailable = available
+            self.isConfiguringLivePhoto = false
+            self.previewRenderer.resume()
+            self.selectedMotion = available ? .livePhoto : .photo
+            if available {
+                self.statusMessage = nil
+                UISelectionFeedbackGenerator().selectionChanged()
+            } else {
+                self.statusMessage = L10n.string("Live Photo isn’t available with the current camera configuration.")
+            }
+        }
+    }
+
     nonisolated private func enableAppleProRAWIfSupported() {
         if photoOutput.isAppleProRAWSupported && !photoOutput.isAppleProRAWEnabled {
             photoOutput.isAppleProRAWEnabled = true
@@ -667,11 +1102,23 @@ final class CameraService: NSObject, ObservableObject {
     /// Metal preview is not fed a low-resolution rear-camera buffer.
     nonisolated private func selectHighestResolutionPhotoFormat(for device: AVCaptureDevice) {
         guard let best = highestResolutionPhotoFormat(for: device), best !== device.activeFormat else { return }
+        _ = setActiveFormat(best, for: device)
+    }
+
+    @discardableResult
+    nonisolated private func setActiveFormat(
+        _ format: AVCaptureDevice.Format,
+        for device: AVCaptureDevice
+    ) -> Bool {
+        guard format !== device.activeFormat else { return true }
         do {
             try device.lockForConfiguration()
-            device.activeFormat = best
+            device.activeFormat = format
             device.unlockForConfiguration()
-        } catch { }
+            return true
+        } catch {
+            return false
+        }
     }
 
     nonisolated private func highestResolutionPhotoFormat(for device: AVCaptureDevice) -> AVCaptureDevice.Format? {
@@ -790,20 +1237,30 @@ final class CameraService: NSObject, ObservableObject {
 
     nonisolated private func configureVideoConnectionFallback(for device: AVCaptureDevice) {
         guard let connection = videoOutput.connection(with: .video) else { return }
-        if connection.isVideoRotationAngleSupported(90) {
-            connection.videoRotationAngle = 90
+        let angle = currentPreviewRotationAngle
+        if connection.isVideoRotationAngleSupported(angle) {
+            connection.videoRotationAngle = angle
         }
-        connection.automaticallyAdjustsVideoMirroring = false
-        connection.isVideoMirrored = device.position == .front
+        if connection.isVideoMirroringSupported {
+            connection.automaticallyAdjustsVideoMirroring = false
+            connection.isVideoMirrored = device.position == .front
+        }
     }
 
-    private func configureRotationCoordinator(for device: AVCaptureDevice) {
-        guard let previewLayer else { return }
+    private func configureRotationCoordinator(for device: AVCaptureDevice, switchToken: UUID? = nil) {
+        guard let previewLayer else {
+            prepareFirstFrameAfterSwitch(token: switchToken)
+            return
+        }
         previewRotationObservation = nil
 
         let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: previewLayer)
         rotationCoordinator = coordinator
-        applyPreviewRotation(coordinator.videoRotationAngleForHorizonLevelPreview, position: device.position)
+        applyPreviewRotation(
+            coordinator.videoRotationAngleForHorizonLevelPreview,
+            position: device.position,
+            switchToken: switchToken
+        )
 
         previewRotationObservation = coordinator.observe(
             \.videoRotationAngleForHorizonLevelPreview,
@@ -817,14 +1274,63 @@ final class CameraService: NSObject, ObservableObject {
         }
     }
 
-    private func applyPreviewRotation(_ angle: CGFloat, position: AVCaptureDevice.Position) {
+    private func applyPreviewRotation(
+        _ angle: CGFloat,
+        position: AVCaptureDevice.Position,
+        switchToken: UUID? = nil
+    ) {
+        currentPreviewRotationAngle = angle
         sessionQueue.async { [weak self] in
             guard let self, let connection = self.videoOutput.connection(with: .video) else { return }
             if connection.isVideoRotationAngleSupported(angle) {
                 connection.videoRotationAngle = angle
             }
-            connection.automaticallyAdjustsVideoMirroring = false
-            connection.isVideoMirrored = position == .front
+            if connection.isVideoMirroringSupported {
+                connection.automaticallyAdjustsVideoMirroring = false
+                connection.isVideoMirrored = position == .front
+            }
+            self.prepareFirstFrameAfterSwitch(token: switchToken)
+        }
+    }
+
+    nonisolated private func prepareFirstFrameAfterSwitch(token: UUID?) {
+        guard let token else { return }
+        videoQueue.async { [weak self] in
+            guard let self, self.pendingCameraSwitchToken == token else { return }
+            self.acceptsPreviewFrames = true
+        }
+    }
+
+    private func recoverCameraSwitchIfNeeded(token: UUID) {
+        videoQueue.async { [weak self] in
+            guard let self, self.pendingCameraSwitchToken == token else { return }
+            self.pendingCameraSwitchToken = nil
+            self.acceptsPreviewFrames = true
+            self.previewRenderer.resume()
+            Task { @MainActor in
+                guard self.isSwitchingCamera else { return }
+                self.cameraSwitchRecoveryTask = nil
+                withAnimation(.easeOut(duration: 0.18)) {
+                    self.isSwitchingCamera = false
+                }
+            }
+        }
+    }
+
+    nonisolated private func finishCameraSwitchFailure(token: UUID?) {
+        videoQueue.async { [weak self] in
+            guard let self else { return }
+            if let token {
+                guard self.pendingCameraSwitchToken == token else { return }
+                self.pendingCameraSwitchToken = nil
+            }
+            self.acceptsPreviewFrames = true
+            self.previewRenderer.resume()
+            Task { @MainActor in
+                self.cameraSwitchRecoveryTask?.cancel()
+                self.cameraSwitchRecoveryTask = nil
+                self.isSwitchingCamera = false
+            }
         }
     }
 
@@ -950,9 +1456,9 @@ final class CameraService: NSObject, ObservableObject {
             selectedFactor = max(minimum, min(requestedZoomFactor ?? selectedTarget?.deviceZoomFactor ?? 1, maximum))
             let displayFactor = requestedDisplayFactor ?? selectedTarget?.displayFactor ?? 1
             selectedLabel = formatLens(displayFactor)
-            publishedOptions = targets.map {
+            publishedOptions = Self.uniqueLensOptions(targets.map {
                 CameraLensOption(factor: Double($0.displayFactor), label: formatLens($0.displayFactor))
-            }
+            })
             lensFactors = [selectedFactor]
             lensIndex = 0
         } else {
@@ -966,6 +1472,13 @@ final class CameraService: NSObject, ObservableObject {
                         result.append(factor)
                     }
                 }
+            let systemFacingFactors = factors.filter {
+                let displayFactor = $0 * multiplier
+                return abs(displayFactor - 1) < 0.01 || abs(displayFactor - 1) >= 0.15
+            }
+            if !systemFacingFactors.isEmpty {
+                factors = systemFacingFactors
+            }
             if factors.isEmpty { factors = [minimum] }
             lensFactors = factors
             lensIndex = factors.enumerated().min(by: {
@@ -973,9 +1486,9 @@ final class CameraService: NSObject, ObservableObject {
             })?.offset ?? 0
             selectedFactor = factors[lensIndex]
             selectedLabel = formatLens(selectedFactor * multiplier)
-            publishedOptions = factors.map {
+            publishedOptions = Self.uniqueLensOptions(factors.map {
                 CameraLensOption(factor: Double($0), label: formatLens($0 * multiplier))
-            }
+            })
         }
 
         do {
@@ -1046,7 +1559,18 @@ final class CameraService: NSObject, ObservableObject {
     }
 
     nonisolated private func formatLens(_ factor: CGFloat) -> String {
-        factor == floor(factor) ? "\(Int(factor))×" : "\(String(format: "%.1f", Double(factor)))×"
+        // Some devices expose a near-unity display multiplier (for example
+        // 0.9) even though it is not a distinct native lens selection. Present
+        // that optical state as the system-facing 1× option.
+        let displayFactor = abs(factor - 1) < 0.15 ? CGFloat(1) : factor
+        return abs(displayFactor - displayFactor.rounded()) < 0.01
+            ? "\(Int(displayFactor.rounded()))×"
+            : "\(String(format: "%.1f", Double(displayFactor)))×"
+    }
+
+    nonisolated private static func uniqueLensOptions(_ options: [CameraLensOption]) -> [CameraLensOption] {
+        var labels = Set<String>()
+        return options.filter { labels.insert($0.label).inserted }
     }
 }
 
@@ -1060,7 +1584,37 @@ extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate {
         // Front-camera mirroring is also applied at the connection level.
         let image = CIImage(cvPixelBuffer: buffer)
         let character = renderCharacter
-        previewRenderer.submit(image, character: character)
+        let adjustment = renderCharacterAdjustment
+        guard acceptsPreviewFrames else { return }
+        if pendingCameraSwitchToken != nil {
+            // Connection changes can leave one stale, pre-rotation buffer queued.
+            // Keep the held frame until dimensions agree with the coordinator.
+            guard previewBufferMatchesCurrentRotation(buffer) else { return }
+            pendingCameraSwitchToken = nil
+            acceptsPreviewFrames = true
+            previewRenderer.reveal(image, character: character, adjustment: adjustment) { [weak self] in
+                guard let self else { return }
+                Task { @MainActor in
+                    guard self.isSwitchingCamera else { return }
+                    self.cameraSwitchRecoveryTask?.cancel()
+                    self.cameraSwitchRecoveryTask = nil
+                    withAnimation(.easeOut(duration: 0.28)) {
+                        self.isSwitchingCamera = false
+                    }
+                }
+            }
+        } else {
+            previewRenderer.submit(image, character: character, adjustment: adjustment)
+        }
+    }
+
+    nonisolated private func previewBufferMatchesCurrentRotation(_ buffer: CVPixelBuffer) -> Bool {
+        let width = CVPixelBufferGetWidth(buffer)
+        let height = CVPixelBufferGetHeight(buffer)
+        guard width != height else { return true }
+        let normalizedAngle = Int(currentPreviewRotationAngle.rounded()).quotientAndRemainder(dividingBy: 180).remainder
+        let expectsPortrait = abs(normalizedAngle) == 90
+        return expectsPortrait ? height > width : width > height
     }
 }
 
@@ -1073,14 +1627,17 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
             pendingRawData = data
             return
         }
+        if captureUsesLivePhoto { pendingLivePhotoData = data }
         guard let image = UIImage(data: data) else { return }
-        let character = renderCharacter
-        let aspectRatio = captureAspectRatio
-        let targetMegapixels = selectedTargetMegapixels()
+        let character = captureCharacter
+        let adjustment = captureCharacterAdjustment
+        let aspectRatio = captureLiveAspectRatio
+        let targetMegapixels = captureLiveTargetMegapixels
         let token = captureProcessingToken
         let preview = ImageRenderer.cameraImage(
             image,
             character: character,
+            adjustment: adjustment,
             aspectRatio: aspectRatio,
             targetMegapixels: min(2, targetMegapixels)
         ) ?? image
@@ -1092,6 +1649,7 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
                 ImageRenderer.cameraImage(
                     image,
                     character: character,
+                    adjustment: adjustment,
                     aspectRatio: aspectRatio,
                     targetMegapixels: targetMegapixels
                 ) ?? image
@@ -1103,9 +1661,42 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
                     self.capturedImage = processed
                     self.capturedPreviewImage = processed
                 }
-                self.isProcessingCapture = false
+                if !self.captureUsesLivePhoto {
+                    self.isProcessingCapture = false
+                    self.autoSaveCaptureIfReady(token: token)
+                }
             }
         }
+    }
+
+    nonisolated func photoOutput(
+        _ output: AVCapturePhotoOutput,
+        didFinishRecordingLivePhotoMovieForEventualFileAt outputFileURL: URL,
+        resolvedSettings: AVCaptureResolvedPhotoSettings
+    ) {
+        Task { @MainActor [weak self] in
+            guard let self, self.captureUsesLivePhoto else { return }
+            // This delegate boundary is the authoritative end of Live Photo
+            // motion capture. Freeze only now, while file/color processing runs.
+            self.isRecordingLivePhoto = false
+            self.previewRenderer.freeze()
+        }
+    }
+
+    nonisolated func photoOutput(
+        _ output: AVCapturePhotoOutput,
+        didFinishProcessingLivePhotoToMovieFileAt outputFileURL: URL,
+        duration: CMTime,
+        photoDisplayTime: CMTime,
+        resolvedSettings: AVCaptureResolvedPhotoSettings,
+        error: Error?
+    ) {
+        guard error == nil else {
+            try? FileManager.default.removeItem(at: outputFileURL)
+            pendingLivePhotoMovieURL = nil
+            return
+        }
+        pendingLivePhotoMovieURL = outputFileURL
     }
 
     nonisolated func photoOutput(
@@ -1115,8 +1706,17 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
     ) {
         let processed = pendingProcessedImage
         let preview = pendingPreviewImage
+        let usesLivePhoto = captureUsesLivePhoto
+        let livePhotoData = pendingLivePhotoData
+        let livePhotoMovieURL = pendingLivePhotoMovieURL
+        let liveCharacter = captureCharacter
+        let liveAdjustment = captureCharacterAdjustment
+        let liveAspectRatio = captureLiveAspectRatio
+        let liveTargetMegapixels = captureLiveTargetMegapixels
+        let token = captureProcessingToken
         Task { @MainActor [weak self] in
             guard let self else { return }
+            self.isRecordingLivePhoto = false
             self.isCapturing = false
             guard error == nil, let processed else {
                 self.isProcessingCapture = false
@@ -1126,7 +1726,46 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
             }
             self.capturedImage = processed
             self.capturedPreviewImage = preview ?? processed
+            if !usesLivePhoto {
+                self.autoSaveCaptureIfReady(token: token)
+            }
             self.stop()
+        }
+        guard error == nil, usesLivePhoto,
+              let livePhotoData, let livePhotoMovieURL else {
+            if usesLivePhoto {
+                Task { @MainActor [weak self] in
+                    guard let self, self.captureProcessingToken == token else { return }
+                    self.isProcessingCapture = false
+                    self.statusMessage = L10n.string("Couldn’t capture this Live Photo.")
+                }
+            }
+            return
+        }
+        Task { @MainActor [weak self] in
+            let output = await Task.detached(priority: .userInitiated) {
+                await LivePhotoProcessor.processCameraCapture(
+                    photoData: livePhotoData,
+                    motionURL: livePhotoMovieURL,
+                    character: liveCharacter,
+                    adjustment: liveAdjustment,
+                    aspectRatio: liveAspectRatio,
+                    targetMegapixels: liveTargetMegapixels
+                )
+            }.value
+            try? FileManager.default.removeItem(at: livePhotoMovieURL)
+            guard let self, self.captureProcessingToken == token else {
+                output?.cleanUp()
+                return
+            }
+            self.capturedLivePhoto?.cleanUp()
+            self.capturedLivePhoto = output
+            self.isProcessingCapture = false
+            if output == nil {
+                self.statusMessage = L10n.string("Couldn’t capture this Live Photo.")
+            } else {
+                self.autoSaveCaptureIfReady(token: token)
+            }
         }
     }
 }

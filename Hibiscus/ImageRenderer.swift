@@ -8,13 +8,55 @@ nonisolated enum ImageRenderer {
         .workingColorSpace: CGColorSpace(name: CGColorSpace.displayP3) as Any
     ])
 
-    static func cameraPreview(_ image: CIImage, character: CameraCharacter) -> CIImage {
-        applyCamera(character, to: image, isPreview: true)
+    static func cameraPreview(
+        _ image: CIImage,
+        character: CameraCharacter?,
+        adjustment: CameraCharacterAdjustment = .centered
+    ) -> CIImage {
+        cameraCIImage(image, character: character, adjustment: adjustment, includesTexture: false)
+    }
+
+    static func cameraCIImage(
+        _ image: CIImage,
+        character: CameraCharacter?,
+        adjustment: CameraCharacterAdjustment,
+        includesTexture: Bool
+    ) -> CIImage {
+        guard let character else { return image }
+        let base = applyCamera(character, to: image, isPreview: !includesTexture)
+        return applyCameraVariation(character, to: base, point: adjustment.point)
+            .cropped(to: image.extent)
+    }
+
+    static func cameraMotionCIImage(
+        _ image: CIImage,
+        character: CameraCharacter?,
+        adjustment: CameraCharacterAdjustment,
+        aspectRatio: CGFloat,
+        inputExposureEV: Double
+    ) -> CIImage {
+        var source = image
+        if inputExposureEV != 0 { source = exposure(source, ev: inputExposureEV) }
+        let orientedAspectRatio = source.extent.width > source.extent.height
+            ? 1 / aspectRatio
+            : aspectRatio
+        let crop = centerCrop(source, to: orientedAspectRatio)
+        let rendered = cameraCIImage(
+            crop,
+            character: character,
+            adjustment: adjustment,
+            includesTexture: false
+        )
+        return rendered.transformed(by: CGAffineTransform(
+            translationX: -rendered.extent.minX,
+            y: -rendered.extent.minY
+        ))
     }
 
     static func cameraImage(
         _ image: UIImage,
-        character: CameraCharacter,
+        character: CameraCharacter?,
+        adjustment: CameraCharacterAdjustment = .centered,
         aspectRatio: CGFloat,
         targetMegapixels: Int,
         inputExposureEV: Double = 0
@@ -33,7 +75,10 @@ nonisolated enum ImageRenderer {
             let scale = sqrt(targetPixels / sourcePixels)
             input = input.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
         }
-        return makeUIImage(from: applyCamera(character, to: input, isPreview: false), scale: image.scale)
+        return makeUIImage(
+            from: cameraCIImage(input, character: character, adjustment: adjustment, includesTexture: true),
+            scale: image.scale
+        )
     }
 
     static func gradeImage(_ image: UIImage, settings: GradeSettings, maxDimension: CGFloat? = nil) -> UIImage? {
@@ -51,10 +96,48 @@ nonisolated enum ImageRenderer {
     }
 
     static func gradeCIImage(_ input: CIImage, settings: GradeSettings) -> CIImage {
-        let styled = applyGradeStyle(settings.style, to: input, point: settings.stylePoint)
-        let mixedStyle = dissolve(input, styled, amount: settings.styleStrength)
+        // Enhance is a neutral correction of the unfiltered source. Style and
+        // Accent are deliberately built only after that source correction.
+        let corrected = applyEnhance(to: input, adjustment: settings.enhance)
+        let styled = applyGradeStyle(settings.style, to: corrected, point: settings.stylePoint)
+        let mixedStyle = dissolve(corrected, styled, amount: settings.styleStrength)
         let accented = applyAccent(to: mixedStyle, accent: settings.accent, point: settings.accentPoint)
         return dissolve(mixedStyle, accented, amount: settings.accentStrength)
+    }
+
+    static func applyEnhance(to image: CIImage, adjustment: EnhanceAdjustment) -> CIImage {
+        guard adjustment.isEnabled else { return image }
+        var output = image
+        if abs(adjustment.exposureEV) > 0.001 {
+            output = exposure(output, ev: adjustment.exposureEV)
+        }
+        output = channelMix(
+            output,
+            red: (adjustment.redGain, 0, 0),
+            green: (0, adjustment.greenGain, 0),
+            blue: (0, 0, adjustment.blueGain)
+        )
+        output = highlightShadow(
+            output,
+            highlights: adjustment.highlightAmount,
+            shadows: adjustment.shadowAmount
+        )
+        output = controls(output, saturation: 1, brightness: 0, contrast: adjustment.contrast)
+        return output.cropped(to: image.extent)
+    }
+
+    static func enhancedSourceImage(
+        _ image: UIImage,
+        adjustment: EnhanceAdjustment,
+        maxDimension: CGFloat = 2_048
+    ) -> UIImage? {
+        guard var input = normalizedCIImage(image) else { return nil }
+        let longest = max(input.extent.width, input.extent.height)
+        if longest > maxDimension {
+            let scale = maxDimension / longest
+            input = input.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        }
+        return makeUIImage(from: applyEnhance(to: input, adjustment: adjustment), scale: 1)
     }
 
     /// Evaluates the same global color graph used by Grade over an RGB lattice.
@@ -139,9 +222,12 @@ nonisolated enum ImageRenderer {
         var output = image
         switch character {
         case .alpha:
-            output = controls(output, saturation: 0.99, brightness: 0, contrast: 1.025)
-            output = highlightShadow(output, highlights: 0.90, shadows: 0.02)
-            output = sharpen(output, amount: 0.10, radius: 0.85)
+            // Clear is restrained, not bypassed: gently polish color, tonal
+            // rolloff, and detail while Original remains the true no-look path.
+            output = vibrance(output, amount: 0.035)
+            output = controls(output, saturation: 1.005, brightness: 0, contrast: 1.035)
+            output = highlightShadow(output, highlights: 0.86, shadows: 0.028)
+            output = sharpen(output, amount: 0.13, radius: 0.85)
         case .beta:
             output = temperature(output, neutral: CIVector(x: 6200, y: 0), target: CIVector(x: 5550, y: 3))
             output = controls(output, saturation: 0.95, brightness: 0, contrast: 0.965)
@@ -250,6 +336,73 @@ nonisolated enum ImageRenderer {
             output = sharpen(output, amount: 0.10, radius: 0.86)
             if !isPreview { output = addGrain(output, amount: 0.016, scale: 0.90) }
         }
+        return output.cropped(to: image.extent)
+    }
+
+    /// Character Pad variation is intentionally character-specific. The shared
+    /// coordinates describe color interpretation and tonal openness, but each
+    /// profile maps them through its own photographic relationships.
+    private static func applyCameraVariation(
+        _ character: CameraCharacter,
+        to image: CIImage,
+        point: CGPoint
+    ) -> CIImage {
+        let color = Double(point.x - 0.5) * 2
+        let tone = Double(0.5 - point.y) * 2
+        guard abs(color) > 0.001 || abs(tone) > 0.001 else { return image }
+        var output = image
+
+        switch character {
+        case .alpha:
+            output = vibrance(output, amount: color * 0.08)
+            output = controls(output, saturation: 1 + color * 0.025, brightness: 0, contrast: 1 - tone * 0.035)
+            output = highlightShadow(output, highlights: 0.97 - max(0, tone) * 0.025, shadows: tone * 0.045)
+        case .beta:
+            output = temperature(output, neutral: CIVector(x: 6200, y: 0), target: CIVector(x: 6200 - color * 360, y: 1 + color * 2.5))
+            output = splitTone(output, shadow: CIColor(red: 0.30, green: 0.42, blue: 0.40), highlight: CIColor(red: 0.94, green: 0.69, blue: 0.50), amount: abs(color) * 0.055, placement: -0.08)
+            output = controls(output, saturation: 1, brightness: 0, contrast: 1 - tone * 0.055)
+            output = highlightShadow(output, highlights: 0.96 - max(0, tone) * 0.055, shadows: tone * 0.055)
+        case .gamma:
+            output = channelMix(output, red: (1 + color * 0.035, -color * 0.012, 0), green: (0, 1, 0), blue: (-color * 0.012, 0, 1 + color * 0.050))
+            output = controls(output, saturation: 1, brightness: 0, contrast: 1 + color * 0.025 - tone * 0.045)
+            output = highlightShadow(output, highlights: 0.98 + min(0, tone) * 0.04, shadows: tone * 0.028)
+        case .delta:
+            output = splitTone(output, shadow: CIColor(red: 0.20, green: 0.39, blue: 0.42), highlight: CIColor(red: 0.98, green: 0.66, blue: 0.42), amount: 0.035 + color * 0.030, placement: -0.12)
+            output = controls(output, saturation: 1 + color * 0.025, brightness: 0, contrast: 1 + color * 0.028 - tone * 0.060)
+            output = highlightShadow(output, highlights: 0.97, shadows: tone * 0.035)
+        case .epsilon:
+            output = temperature(output, neutral: CIVector(x: 6200, y: 0), target: CIVector(x: 6200 - color * 420, y: 1 + color))
+            output = controls(output, saturation: 1 - color * 0.022, brightness: 0, contrast: 1 - tone * 0.060)
+            output = highlightShadow(output, highlights: 0.94 - max(0, tone) * 0.040, shadows: 0.015 + tone * 0.070)
+        case .zeta:
+            output = temperature(output, neutral: CIVector(x: 6200, y: 0), target: CIVector(x: 6200 - color * 260, y: color * 4.5))
+            output = channelMix(output, red: (1, 0, 0), green: (color * 0.012, 1 + color * 0.025, 0), blue: (0, 0, 1 - color * 0.030))
+            output = controls(output, saturation: 1, brightness: 0, contrast: 1 + color * 0.018 - tone * 0.050)
+            output = highlightShadow(output, highlights: 0.98, shadows: tone * 0.040)
+        case .eta:
+            output = splitTone(output, shadow: CIColor(red: 0.08, green: 0.42, blue: 0.55), highlight: CIColor(red: 0.82, green: 0.23, blue: 0.65), amount: 0.045 + color * 0.045, placement: 0.08)
+            output = channelMix(output, red: (1 + color * 0.018, 0, 0), green: (0, 1, 0), blue: (-color * 0.010, 0, 1 + color * 0.035))
+            output = controls(output, saturation: 1, brightness: 0, contrast: 1 + color * 0.020 - tone * 0.060)
+            output = highlightShadow(output, highlights: 0.94 - max(0, tone) * 0.030, shadows: tone * 0.025)
+        case .theta:
+            output = temperature(output, neutral: CIVector(x: 6200, y: 0), target: CIVector(x: 6200 - color * 300, y: -color * 1.5))
+            output = channelMix(output, red: (1 + color * 0.015, 0, -color * 0.008), green: (0, 1, 0), blue: (0, 0, 1 - color * 0.010))
+            output = controls(output, saturation: 1 - max(0, color) * 0.018, brightness: 0, contrast: 1 - tone * 0.050)
+            output = highlightShadow(output, highlights: 0.94 - max(0, tone) * 0.050, shadows: tone * 0.045)
+        case .sigma:
+            output = channelMix(output, red: (1 + color * 0.020, 0, 0), green: (0, 1 - color * 0.035, 0), blue: (-color * 0.008, 0, 1 + color * 0.018))
+            output = splitTone(output, shadow: CIColor(red: 0.25, green: 0.34, blue: 0.43), highlight: CIColor(red: 0.80, green: 0.62, blue: 0.46), amount: abs(color) * 0.035, placement: -0.10)
+            output = controls(output, saturation: 1, brightness: 0, contrast: 1 + color * 0.025 - tone * 0.065)
+            output = highlightShadow(output, highlights: 0.97, shadows: tone * 0.035)
+        case .omega:
+            let red = 0.27 + color * 0.055
+            let green = 0.64 - color * 0.035
+            let blue = 0.09 - color * 0.020
+            output = blackAndWhite(output, red: red, green: green, blue: blue, tint: CIColor(red: 0.72, green: 0.70, blue: 0.67))
+            output = controls(output, saturation: 0, brightness: 0, contrast: 1 + color * 0.035 - tone * 0.075)
+            output = highlightShadow(output, highlights: 0.96 - max(0, tone) * 0.040, shadows: tone * 0.045)
+        }
+        output = exposure(output, ev: tone * 0.12)
         return output.cropped(to: image.extent)
     }
 

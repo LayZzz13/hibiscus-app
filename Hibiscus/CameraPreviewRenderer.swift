@@ -9,11 +9,14 @@ nonisolated final class CameraPreviewRenderer: NSObject, MTKViewDelegate, @unche
     private let commandQueue: MTLCommandQueue
     private let colorSpace = CGColorSpace(name: CGColorSpace.displayP3)!
     private var latestImage: CIImage?
-    private var latestCharacter: CameraCharacter = .alpha
+    private var latestCharacter: CameraCharacter?
+    private var latestAdjustment = CameraCharacterAdjustment.centered
     private var frameVersion: UInt64 = 0
     private var submittedVersion: UInt64 = 0
     private var isRendering = false
     private var isFrozen = false
+    private var freezesAfterNextRender = false
+    private var pendingReveal: (@Sendable () -> Void)?
 
     override init() {
         guard let device = MTLCreateSystemDefaultDevice(),
@@ -39,7 +42,11 @@ nonisolated final class CameraPreviewRenderer: NSObject, MTKViewDelegate, @unche
         view.autoResizeDrawable = true
     }
 
-    func submit(_ image: CIImage, character: CameraCharacter) {
+    func submit(
+        _ image: CIImage,
+        character: CameraCharacter?,
+        adjustment: CameraCharacterAdjustment
+    ) {
         lock.lock()
         guard !isFrozen else {
             lock.unlock()
@@ -47,7 +54,42 @@ nonisolated final class CameraPreviewRenderer: NSObject, MTKViewDelegate, @unche
         }
         latestImage = image
         latestCharacter = character
+        latestAdjustment = adjustment
         frameVersion &+= 1
+        lock.unlock()
+    }
+
+    /// Atomically replaces the frozen switch frame and resumes rendering. The
+    /// completion runs only after Metal presents the first correctly configured
+    /// frame from the new camera.
+    func reveal(
+        _ image: CIImage,
+        character: CameraCharacter?,
+        adjustment: CameraCharacterAdjustment,
+        completion: @escaping @Sendable () -> Void
+    ) {
+        lock.lock()
+        latestImage = image
+        latestCharacter = character
+        latestAdjustment = adjustment
+        frameVersion &+= 1
+        pendingReveal = completion
+        isFrozen = false
+        freezesAfterNextRender = false
+        lock.unlock()
+    }
+
+    /// Seeds a newly created preview view with a known correctly oriented still
+    /// and then holds it until a validated camera frame is revealed.
+    func hold(_ image: CIImage) {
+        lock.lock()
+        latestImage = image
+        latestCharacter = nil
+        latestAdjustment = .centered
+        frameVersion &+= 1
+        pendingReveal = nil
+        isFrozen = false
+        freezesAfterNextRender = true
         lock.unlock()
     }
 
@@ -60,6 +102,7 @@ nonisolated final class CameraPreviewRenderer: NSObject, MTKViewDelegate, @unche
     func resume() {
         lock.lock()
         isFrozen = false
+        freezesAfterNextRender = false
         lock.unlock()
     }
 
@@ -83,6 +126,7 @@ nonisolated final class CameraPreviewRenderer: NSObject, MTKViewDelegate, @unche
             return
         }
         let character = latestCharacter
+        let adjustment = latestAdjustment
         submittedVersion = frameVersion
         isRendering = true
         lock.unlock()
@@ -99,7 +143,11 @@ nonisolated final class CameraPreviewRenderer: NSObject, MTKViewDelegate, @unche
         // Process only the newest buffer and build the filter graph after scaling
         // to the actual drawable. Preview effects never need full still resolution.
         let displayImage = aspectFill(image, into: target)
-        let output = ImageRenderer.cameraPreview(displayImage, character: character)
+        let output = ImageRenderer.cameraPreview(
+            displayImage,
+            character: character,
+            adjustment: adjustment
+        )
         context.render(
             output,
             to: drawable.texture,
@@ -112,7 +160,14 @@ nonisolated final class CameraPreviewRenderer: NSObject, MTKViewDelegate, @unche
             guard let self else { return }
             self.lock.lock()
             self.isRendering = false
+            if self.freezesAfterNextRender {
+                self.isFrozen = true
+                self.freezesAfterNextRender = false
+            }
+            let reveal = self.pendingReveal
+            self.pendingReveal = nil
             self.lock.unlock()
+            reveal?()
         }
         commandBuffer.commit()
     }

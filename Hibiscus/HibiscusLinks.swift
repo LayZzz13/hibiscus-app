@@ -6,4 +6,6 @@ nonisolated enum HibiscusLinks {
     static let discord = URL(string: "https://discord.gg/dPEb6Wsfze")!
     static let developerWebsite = URL(string: "https://1234567890.dev")!
     static let remoteContent = URL(string: "https://1234567890.dev/api/hibiscus.json")!
+    static let privacy = URL(string: "https://hibiscus.1234567890.dev/privacy/")!
+    static let terms = URL(string: "https://hibiscus.1234567890.dev/terms/")!
 }

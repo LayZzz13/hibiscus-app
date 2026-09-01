@@ -1,4 +1,5 @@
 import AVKit
+import Photos
 import SwiftUI
 
 struct CameraView: View {
@@ -9,18 +10,21 @@ struct CameraView: View {
     @StateObject private var camera: CameraService
     @State private var showsExposure = false
     @State private var isSelectionPanelExpanded = true
+    @State private var showsCharacterPad = false
     @State private var cameraControlRotation: Angle = .zero
     @State private var cameraControlSide: CGFloat = 0
     @State private var capturePrintProgress: CGFloat = 0
     @State private var captureDevelopmentProgress: CGFloat = 1
+    @State private var captureLivePhotoPreview: PHLivePhoto?
+    @State private var captureLivePhotoPlaybackID = 0
     @State private var captureAnimationTask: Task<Void, Never>?
     let isActive: Bool
-    let sendToGrade: (UIImage, CameraCharacter, Date?) -> Void
+    let sendToGrade: (GradeImportItem) -> Void
 
     init(
         preferences: AppPreferences,
         isActive: Bool,
-        sendToGrade: @escaping (UIImage, CameraCharacter, Date?) -> Void
+        sendToGrade: @escaping (GradeImportItem) -> Void
     ) {
         self.preferences = preferences
         self.isActive = isActive
@@ -48,9 +52,26 @@ struct CameraView: View {
 
             if let status = camera.statusMessage {
                 StatusPill(message: status)
-                    .onTapGesture { camera.statusMessage = nil }
+                    .zIndex(10)
+                    .onTapGesture {
+                        withAnimation(.easeOut(duration: 0.18)) {
+                            camera.statusMessage = nil
+                        }
+                    }
+                    .task(id: status) {
+                        do {
+                            try await Task.sleep(for: .seconds(3))
+                        } catch {
+                            return
+                        }
+                        guard !Task.isCancelled, camera.statusMessage == status else { return }
+                        withAnimation(.easeOut(duration: 0.18)) {
+                            camera.statusMessage = nil
+                        }
+                    }
             }
         }
+        .animation(.easeInOut(duration: 0.22), value: camera.statusMessage)
         .tint(.white)
         .onAppear {
             UIDevice.current.beginGeneratingDeviceOrientationNotifications()
@@ -80,6 +101,8 @@ struct CameraView: View {
             guard hasCapture else {
                 capturePrintProgress = 0
                 captureDevelopmentProgress = 1
+                captureLivePhotoPreview = nil
+                captureLivePhotoPlaybackID = 0
                 return
             }
             capturePrintProgress = 0
@@ -99,6 +122,12 @@ struct CameraView: View {
                 withAnimation(.easeInOut(duration: 0.9)) {
                     captureDevelopmentProgress = 1
                 }
+            }
+        }
+        .onChange(of: camera.selectedCamera) { _, selection in
+            guard showsCharacterPad, selection.character == nil else { return }
+            withAnimation(.snappy(duration: 0.20)) {
+                showsCharacterPad = false
             }
         }
         .onDisappear {
@@ -136,6 +165,16 @@ struct CameraView: View {
                     .frame(width: proxy.size.width, height: previewHeight)
                     .clipped()
                     .offset(y: previewTop)
+                    .scaleEffect(camera.isSwitchingCamera ? 1.012 : 1)
+                    .blur(radius: camera.isSwitchingCamera ? 1.2 : 0)
+                    .overlay {
+                        if camera.isSwitchingCamera {
+                            Color.black.opacity(0.13)
+                                .allowsHitTesting(false)
+                                .transition(.opacity)
+                        }
+                    }
+                    .animation(.easeInOut(duration: 0.28), value: camera.isSwitchingCamera)
 
                 if camera.authorizationState == .authorized {
                     if preferences.cameraGridEnabled {
@@ -146,7 +185,12 @@ struct CameraView: View {
                     }
 
                     CameraCaptureEventOverlay(
-                        isCaptureEnabled: isActive && camera.isRunning && camera.countdown == nil && !camera.isCapturing,
+                        isCaptureEnabled: isActive
+                            && camera.isRunning
+                            && camera.countdown == nil
+                            && !camera.isCapturing
+                            && !camera.isConfiguringLivePhoto
+                            && !showsCharacterPad,
                         onCapture: camera.capture
                     )
                     .frame(width: proxy.size.width, height: previewHeight)
@@ -155,10 +199,40 @@ struct CameraView: View {
                     cameraTopBar
                         .frame(width: isLandscapeControlLayout ? 68 : proxy.size.width - 24)
                         .position(x: topControlX, y: topControlY)
+                        .zIndex(3)
 
                     zoomControl
                         .rotationEffect(cameraControlRotation)
                         .position(x: zoomX, y: positionedZoomY)
+                        .zIndex(3)
+
+                    cameraControls
+                        .padding(.horizontal, 10)
+                        .padding(.bottom, 10)
+                        .frame(maxHeight: .infinity, alignment: .bottom)
+                        .zIndex(3)
+
+                    if showsCharacterPad {
+                        Color.clear
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                withAnimation(.snappy(duration: 0.20)) {
+                                    showsCharacterPad = false
+                                }
+                            }
+                            .frame(width: proxy.size.width, height: proxy.size.height)
+                            .zIndex(2)
+                    }
+
+                    if showsCharacterPad, let character = camera.selectedCamera.character {
+                        cameraCharacterPadOverlay(character: character)
+                            .frame(width: 136, height: 136)
+                            .position(
+                                x: proxy.size.width - 76,
+                                y: previewTop + 76
+                            )
+                            .zIndex(4)
+                    }
 
                     if let countdown = camera.countdown {
                         Text("\(countdown)")
@@ -169,10 +243,6 @@ struct CameraView: View {
                             .offset(y: previewTop)
                     }
 
-                    cameraControls
-                        .padding(.horizontal, 10)
-                        .padding(.bottom, 10)
-                        .frame(maxHeight: .infinity, alignment: .bottom)
                 }
             }
         }
@@ -201,7 +271,7 @@ struct CameraView: View {
         case .authorized:
             CameraMetalPreview(
                 renderer: camera.previewRenderer,
-                isActive: isActive && !camera.isCapturing,
+                isActive: isActive && (!camera.isCapturing || camera.isRecordingLivePhoto),
                 onPreviewLayerReady: camera.attachPreviewLayer
             )
                 .background(Color(white: 0.025))
@@ -234,15 +304,23 @@ struct CameraView: View {
             if cameraControlSide == 0 {
                 HStack(spacing: 7) {
                     flashTopControl
+                    livePhotoTopControl
                     Spacer()
-                    ratioTimerTopControl
-                    qualityTopControl
+                    if !showsCharacterPad {
+                        ratioTimerTopControl
+                        qualityTopControl
+                        characterPadTopControl
+                    }
                 }
             } else {
                 VStack(spacing: 9) {
                     flashTopControl
-                    ratioTimerTopControl
-                    qualityTopControl
+                    livePhotoTopControl
+                    if !showsCharacterPad {
+                        ratioTimerTopControl
+                        qualityTopControl
+                        characterPadTopControl
+                    }
                 }
             }
         }
@@ -268,6 +346,53 @@ struct CameraView: View {
         .disabled(!camera.flashAvailable)
         .opacity(camera.flashAvailable ? 1 : 0.46)
         .rotationEffect(cameraControlRotation)
+    }
+
+    private var livePhotoTopControl: some View {
+        Button {
+            camera.toggleLivePhoto()
+        } label: {
+            Group {
+                if camera.isConfiguringLivePhoto {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    // Apple's Live Photo glyph is used only for the Live Photo
+                    // capture state it represents.
+                    Image(systemName: camera.selectedMotion == .livePhoto ? "livephoto" : "livephoto.slash")
+                }
+            }
+            .frame(width: 18, height: 18)
+        }
+        .hibiscusGlassButtonStyle()
+        .disabled(camera.isConfiguringLivePhoto || camera.selectedFormat == .raw)
+        .opacity(camera.selectedFormat == .processed ? 1 : 0.46)
+        .rotationEffect(cameraControlRotation)
+    }
+
+    private var characterPadTopControl: some View {
+        Button {
+            if camera.selectedCamera.character != nil {
+                withAnimation(.snappy(duration: 0.20)) {
+                    showsCharacterPad = true
+                }
+                UISelectionFeedbackGenerator().selectionChanged()
+            } else {
+                camera.statusMessage = L10n.string("Choose a Camera Character to use the Character Pad.")
+            }
+        } label: {
+            Image(systemName: "square.grid.3x3")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 18, height: 18)
+        }
+        .hibiscusGlassButtonStyle()
+        .rotationEffect(cameraControlRotation)
+        .accessibilityLabel("Character Pad")
+        .accessibilityHint(
+            camera.selectedCamera.character == nil
+                ? "Choose a Camera Character first."
+                : "Opens live Camera Character customization."
+        )
     }
 
     private var ratioTimerTopControl: some View {
@@ -345,14 +470,14 @@ struct CameraView: View {
                     UISelectionFeedbackGenerator().selectionChanged()
                 } label: {
                     HStack(spacing: 6) {
-                        Text(camera.selectedCharacter.symbol)
+                        Text(camera.selectedCamera.symbol)
                             .font(.system(size: 17))
                             .foregroundStyle(Color.hibiscusAccent)
                             .frame(width: 29, height: 29)
                         VStack(alignment: .leading, spacing: 0) {
-                            Text(camera.selectedCharacter.name)
+                            Text(camera.selectedCamera.name)
                                 .font(.subheadline.weight(.semibold))
-                            Text(LocalizedStringKey(camera.selectedCharacter.subtitle))
+                            Text(LocalizedStringKey(camera.selectedCamera.subtitle))
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
@@ -390,58 +515,68 @@ struct CameraView: View {
     }
 
     private var cameraSurfaceTint: Color {
-        camera.selectedCharacter.identityColor
+        camera.selectedCamera.identityColor
     }
 
     private var expandedCameraSelections: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(spacing: 7) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(alignment: .top, spacing: 10) {
-                        ForEach(CameraCharacter.allCases) { character in
-                            Button {
-                                camera.selectedCharacter = character
-                                UISelectionFeedbackGenerator().selectionChanged()
-                            } label: {
-                                VStack(spacing: 5) {
-                                    Text(character.symbol)
-                                        .font(.system(size: 23))
-                                        .foregroundStyle(.white)
-                                        .frame(height: 29)
+        VStack(spacing: 7) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .top, spacing: 10) {
+                    ForEach(CameraSelection.allCases) { selection in
+                        Button {
+                            camera.selectedCamera = selection
+                            UISelectionFeedbackGenerator().selectionChanged()
+                        } label: {
+                            VStack(spacing: 5) {
+                                Text(selection.symbol)
+                                    .font(.system(size: 23))
+                                    .foregroundStyle(.white)
+                                    .frame(height: 29)
 
-                                    Text(character.name)
-                                        .font(.caption2.weight(camera.selectedCharacter == character ? .bold : .medium))
-                                        .foregroundStyle(.white.opacity(camera.selectedCharacter == character ? 1 : 0.78))
-                                        .lineLimit(1)
-                                }
-                                .frame(width: 54, height: 55)
-                                .background {
-                                    if camera.selectedCharacter == character {
-                                        RoundedRectangle(cornerRadius: 13, style: .continuous)
-                                            .fill(Color.hibiscusAccent)
-                                    }
-                                }
-                                .animation(.snappy(duration: 0.18), value: camera.selectedCharacter)
+                                Text(selection.name)
+                                    .font(.caption2.weight(camera.selectedCamera == selection ? .bold : .medium))
+                                    .foregroundStyle(.white.opacity(camera.selectedCamera == selection ? 1 : 0.78))
+                                    .lineLimit(1)
                             }
-                            .buttonStyle(.plain)
+                            .frame(width: 54, height: 55)
+                            .background {
+                                if camera.selectedCamera == selection {
+                                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                                        .fill(Color.hibiscusAccent)
+                                }
+                            }
+                            .animation(.snappy(duration: 0.18), value: camera.selectedCamera)
                         }
+                        .buttonStyle(.plain)
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.top, 3)
                 }
-
-                Button {
-                    preferences.cameraGridEnabled.toggle()
-                    UISelectionFeedbackGenerator().selectionChanged()
-                } label: {
-                    Label("Grid", systemImage: preferences.cameraGridEnabled ? "grid" : "square")
-                        .frame(maxWidth: .infinity)
-                }
-                .hibiscusGlassButtonStyle(.clear)
-                .font(.caption.weight(.semibold))
+                .padding(.horizontal, 10)
+                .padding(.top, 3)
             }
+
+            Button {
+                preferences.cameraGridEnabled.toggle()
+                UISelectionFeedbackGenerator().selectionChanged()
+            } label: {
+                Label("Grid", systemImage: preferences.cameraGridEnabled ? "grid" : "square")
+                    .frame(maxWidth: .infinity)
+            }
+            .hibiscusGlassButtonStyle(.clear)
+            .font(.caption.weight(.semibold))
         }
-        .frame(maxHeight: 108)
+    }
+
+    private func cameraCharacterPadOverlay(character: CameraCharacter) -> some View {
+        CameraCharacterPad(
+            character: character,
+            point: camera.characterPoint,
+            onChange: camera.updateCharacterPoint,
+            onReset: camera.resetCharacterPoint
+        )
+        .frame(width: 136, height: 136)
+        .shadow(color: .black.opacity(0.30), radius: 3, y: 2)
+        .shadow(color: .black.opacity(0.68), radius: 16, y: 8)
+        .transition(.opacity.combined(with: .scale(scale: 0.94, anchor: .topTrailing)))
     }
 
     private var exposureControl: some View {
@@ -470,21 +605,25 @@ struct CameraView: View {
             Spacer()
 
             Button(action: camera.capture) {
-                Circle()
-                    .fill(.white)
-                    .frame(width: 58, height: 58)
-                    .overlay { Circle().stroke(.black.opacity(0.78), lineWidth: 3).padding(5) }
-                    .overlay {
-                        if camera.isProcessingCapture {
-                            ProgressView()
-                                .controlSize(.small)
-                                .tint(.black)
-                        }
-                    }
+                LivePhotoShutter(
+                    isRecordingLivePhoto: camera.isRecordingLivePhoto,
+                    isProcessingCapture: camera.isProcessingCapture
+                )
             }
             .buttonStyle(.plain)
-            .hibiscusGlass(.clear, interactive: true, in: Circle())
-            .disabled(!camera.isRunning || camera.countdown != nil || camera.isCapturing)
+            .hibiscusGlass(.clear, in: Circle())
+            .overlay {
+                LivePhotoCaptureRing(isRecording: camera.isRecordingLivePhoto)
+            }
+            .allowsHitTesting(
+                camera.isRunning
+                && camera.countdown == nil
+                && !camera.isCapturing
+                && !camera.isConfiguringLivePhoto
+            )
+            .accessibilityValue(
+                camera.isRecordingLivePhoto ? Text("Capturing Live Photo") : Text("")
+            )
 
             Spacer()
 
@@ -494,6 +633,7 @@ struct CameraView: View {
                     .frame(width: 28, height: 28)
             }
             .hibiscusGlassButtonStyle(.clear)
+            .disabled(camera.isSwitchingCamera)
         }
         .foregroundStyle(.white)
         .padding(.horizontal, 18)
@@ -573,6 +713,18 @@ struct CameraView: View {
 
                             PhotoFitView(image: displayImage)
                                 .opacity(highlightDevelopment)
+
+                            if let captureLivePhotoPreview,
+                               !camera.isProcessingCapture,
+                               captureDevelopmentProgress >= 1 {
+                                HibiscusLivePhotoView(
+                                    livePhoto: captureLivePhotoPreview,
+                                    playbackID: captureLivePhotoPlaybackID,
+                                    onPlaybackEnded: { }
+                                )
+                                .allowsHitTesting(false)
+                                .transition(.opacity)
+                            }
                         }
                             .frame(width: photoWidth, height: photoHeight)
                             .background(.black)
@@ -583,6 +735,23 @@ struct CameraView: View {
                                     .stroke(.white.opacity(0.10), lineWidth: 0.5)
                             }
                             .shadow(color: .black.opacity(0.26), radius: 10, y: 4)
+                            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                            .onTapGesture {
+                                guard captureLivePhotoPreview != nil,
+                                      !camera.isProcessingCapture,
+                                      captureDevelopmentProgress >= 1 else { return }
+                                captureLivePhotoPlaybackID &+= 1
+                                UISelectionFeedbackGenerator().selectionChanged()
+                            }
+                            .task(id: camera.capturedLivePhoto?.motionURL) {
+                                captureLivePhotoPreview = nil
+                                captureLivePhotoPlaybackID = 0
+                                guard let output = camera.capturedLivePhoto else { return }
+                                captureLivePhotoPreview = await LivePhotoPreviewFactory.make(
+                                    from: output,
+                                    placeholder: displayImage
+                                )
+                            }
 
                         captureMetadata
                     }
@@ -600,16 +769,30 @@ struct CameraView: View {
                 HibiscusGlassContainer(spacing: 10) {
                     HStack(spacing: 10) {
                         resultButton("Retake", systemImage: "arrow.counterclockwise", action: camera.retake)
+                            .disabled(camera.isSavingCapture)
+                            .opacity(camera.isSavingCapture ? 0.52 : 1)
                         resultButton("Grade", systemImage: "circle.lefthalf.filled") {
                             if let result = camera.capturedImage {
-                                sendToGrade(result, camera.selectedCharacter, camera.capturedDate)
+                                let thumbnail = ImageRenderer.resizedImage(result, maxDimension: 384) ?? result
+                                sendToGrade(GradeImportItem(
+                                    image: result,
+                                    thumbnail: thumbnail,
+                                    metadata: PhotoMetadata(
+                                        date: camera.capturedDate,
+                                        location: nil,
+                                        cameraCharacter: camera.selectedCamera.character
+                                    ),
+                                    livePhoto: camera.takeCapturedLivePhotoSource()
+                                ))
                             }
                         }
-                        .disabled(camera.isProcessingCapture)
-                        .opacity(camera.isProcessingCapture ? 0.52 : 1)
-                        resultButton("Save", systemImage: "square.and.arrow.down", action: camera.saveCapture)
-                            .disabled(camera.isProcessingCapture)
-                            .opacity(camera.isProcessingCapture ? 0.52 : 1)
+                        .disabled(camera.isProcessingCapture || camera.isSavingCapture)
+                        .opacity(camera.isProcessingCapture || camera.isSavingCapture ? 0.52 : 1)
+                        if !camera.didAutoSaveCapture {
+                            resultButton("Save", systemImage: "square.and.arrow.down", action: camera.saveCapture)
+                                .disabled(camera.isProcessingCapture || camera.isSavingCapture)
+                                .opacity(camera.isProcessingCapture || camera.isSavingCapture ? 0.52 : 1)
+                        }
                     }
                 }
                 .frame(height: 46)
@@ -622,15 +805,15 @@ struct CameraView: View {
 
     private var captureMetadata: some View {
         HStack(spacing: 9) {
-            Text(camera.selectedCharacter.symbol)
+            Text(camera.selectedCamera.symbol)
                 .font(.system(size: 19))
                 .foregroundStyle(Color.hibiscusAccent)
                 .frame(width: 28, height: 28)
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(camera.selectedCharacter.name)
+                Text(camera.selectedCamera.name)
                     .font(.caption.weight(.semibold))
-                Text(LocalizedStringKey(camera.selectedCharacter.subtitle))
+                Text(LocalizedStringKey(camera.selectedCamera.subtitle))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -649,10 +832,15 @@ struct CameraView: View {
                         ProgressView().controlSize(.mini)
                         Text("Finishing")
                     }
+                } else if camera.isSavingCapture {
+                    HStack(spacing: 4) {
+                        ProgressView().controlSize(.mini)
+                        Text("Saving")
+                    }
                 } else {
                     Text("Ready")
                 }
-                Text("\(camera.selectedMegapixels) MP · \(camera.selectedFormat.rawValue) · \(camera.selectedRatio.rawValue)")
+                Text(captureTechnicalMetadata)
                     .foregroundStyle(.secondary)
             }
             .font(.caption2.weight(.medium))
@@ -661,6 +849,11 @@ struct CameraView: View {
         .frame(height: 46)
         .hibiscusGlass(in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .frame(maxWidth: .infinity)
+    }
+
+    private var captureTechnicalMetadata: String {
+        let live = camera.capturedLivePhoto == nil ? "" : " · LIVE"
+        return "\(camera.selectedMegapixels) MP · \(camera.selectedFormat.rawValue) · \(camera.selectedRatio.rawValue)\(live)"
     }
 
     private func resultButton(
@@ -733,6 +926,204 @@ private struct CameraGrid: View {
             }
         }
         .shadow(color: .black.opacity(0.22), radius: 1)
+    }
+}
+
+private struct CameraCharacterPad: View {
+    let character: CameraCharacter
+    let point: CGPoint
+    let onChange: (CGPoint) -> Void
+    let onReset: () -> Void
+
+    var body: some View {
+        GeometryReader { proxy in
+            let size = proxy.size
+            let controlDiameter = max(14, size.width * 0.125)
+            let controlRadius = controlDiameter / 2
+            let centerMarkerDiameter = max(5, size.width * 0.046)
+            let cornerRadius = size.width * 0.086
+            ZStack {
+                ZStack {
+                    character.identityColor
+                    LinearGradient(
+                        colors: [
+                            Color(white: 0.56),
+                            character.identityColor,
+                            character.identityColor
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    LinearGradient(
+                        stops: [
+                            .init(color: .white.opacity(0.72), location: 0),
+                            .init(color: .clear, location: 0.43),
+                            .init(color: .black.opacity(0.82), location: 1)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                }
+
+                Canvas { context, canvasSize in
+                    let inset = canvasSize.width * 0.09
+                    for row in 0..<11 {
+                        for column in 0..<11 {
+                            let x = inset + (canvasSize.width - inset * 2) * CGFloat(column) / 10
+                            let y = inset + (canvasSize.height - inset * 2) * CGFloat(row) / 10
+                            let radius = canvasSize.width * (row > 7 ? 0.0094 : 0.0077)
+                            context.fill(
+                                Path(ellipseIn: CGRect(x: x - radius, y: y - radius, width: radius * 2, height: radius * 2)),
+                                with: .color(.white.opacity(0.38 + Double(row) * 0.038))
+                            )
+                        }
+                    }
+                }
+                .allowsHitTesting(false)
+
+                Circle()
+                    .stroke(.white.opacity(0.34), lineWidth: 1)
+                    .frame(width: centerMarkerDiameter, height: centerMarkerDiameter)
+                    .position(x: size.width / 2, y: size.height / 2)
+
+                Circle()
+                    .fill(.white)
+                    .frame(width: controlDiameter, height: controlDiameter)
+                    .overlay { Circle().stroke(.black.opacity(0.30), lineWidth: 1) }
+                    .shadow(color: .black.opacity(0.45), radius: 3, y: 1.5)
+                    .position(
+                        x: controlRadius + point.x * max(0, size.width - controlDiameter),
+                        y: controlRadius + point.y * max(0, size.height - controlDiameter)
+                    )
+            }
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .hibiscusGlass(
+                tint: character.identityColor.opacity(0.08),
+                interactive: true,
+                in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            )
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        onChange(CGPoint(
+                            x: min(1, max(0, value.location.x / size.width)),
+                            y: min(1, max(0, value.location.y / size.height))
+                        ))
+                    }
+            )
+            .simultaneousGesture(TapGesture(count: 2).onEnded(onReset))
+            .accessibilityLabel("Character Pad")
+            .accessibilityHint("Drag to vary this Camera Character. Double-tap to reset.")
+        }
+    }
+}
+
+private struct LivePhotoShutter: View {
+    let isRecordingLivePhoto: Bool
+    let isProcessingCapture: Bool
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(.white)
+
+            Circle()
+                .stroke(.black.opacity(0.78), lineWidth: 3)
+                .padding(5)
+
+            if isProcessingCapture && !isRecordingLivePhoto {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(.black)
+            }
+        }
+        .frame(width: 58, height: 58)
+    }
+}
+
+private struct LivePhotoCaptureRing: View {
+    let isRecording: Bool
+
+    @State private var recordingStartedAt: Date?
+    @State private var completionProgress: CGFloat = 0
+    @State private var progressOpacity: Double = 0
+    @State private var completionTask: Task<Void, Never>?
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1 / 60, paused: !isRecording)) { timeline in
+            ZStack {
+                Circle()
+                    .stroke(Color.hibiscusAccent.opacity(0.72), lineWidth: 5)
+
+                Circle()
+                    .trim(from: 0, to: max(0.012, displayedProgress(at: timeline.date)))
+                    .stroke(
+                        Color.hibiscusAccent,
+                        style: StrokeStyle(lineWidth: 5, lineCap: .round)
+                    )
+                    .rotationEffect(.degrees(-90))
+            }
+            .opacity(progressOpacity)
+        }
+        .allowsHitTesting(false)
+        .onAppear {
+            if isRecording {
+                beginProgress()
+            }
+        }
+        .onChange(of: isRecording) { _, recording in
+            recording ? beginProgress() : completeProgress()
+        }
+        .onDisappear {
+            completionTask?.cancel()
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func beginProgress() {
+        completionTask?.cancel()
+        recordingStartedAt = Date()
+        completionProgress = 0
+        progressOpacity = 1
+    }
+
+    private func completeProgress() {
+        guard progressOpacity > 0 else { return }
+        completionTask?.cancel()
+        completionProgress = displayedProgress(at: Date())
+        recordingStartedAt = nil
+        withAnimation(.easeOut(duration: 0.18)) {
+            completionProgress = 1
+        }
+
+        completionTask = Task { @MainActor in
+            do {
+                try await Task.sleep(for: .seconds(0.20))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled, !isRecording else { return }
+            withAnimation(.easeOut(duration: 0.18)) {
+                progressOpacity = 0
+            }
+            do {
+                try await Task.sleep(for: .seconds(0.18))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled, !isRecording else { return }
+            completionProgress = 0
+        }
+    }
+
+    private func displayedProgress(at date: Date) -> CGFloat {
+        guard let recordingStartedAt else { return completionProgress }
+        let elapsed = max(0, date.timeIntervalSince(recordingStartedAt))
+        // This elapsed-time curve never reaches completion on its own. It stays
+        // active for however long AVFoundation records, and the real recording
+        // completion callback supplies the final segment of the ring.
+        return min(0.97, CGFloat(1 - exp(-elapsed / 1.25)))
     }
 }
 

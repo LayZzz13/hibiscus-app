@@ -81,7 +81,72 @@ nonisolated enum CameraCharacter: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-nonisolated enum GradeStyle: String, CaseIterable, Identifiable, Sendable {
+/// The Camera rail contains one unprocessed reference option plus the ten
+/// designed Camera Characters. Original deliberately is not a character.
+nonisolated enum CameraSelection: Identifiable, Equatable, Sendable {
+    case original
+    case character(CameraCharacter)
+
+    static let allCases: [CameraSelection] = [.original] + CameraCharacter.allCases.map(Self.character)
+
+    var id: String {
+        switch self {
+        case .original: "original"
+        case .character(let character): "character.\(character.rawValue)"
+        }
+    }
+
+    var storageValue: String { id }
+
+    init?(storageValue: String) {
+        if storageValue == "original" {
+            self = .original
+        } else if storageValue.hasPrefix("character."),
+                  let character = CameraCharacter(rawValue: String(storageValue.dropFirst("character.".count))) {
+            self = .character(character)
+        } else if let character = CameraCharacter(rawValue: storageValue) {
+            // Compatibility with the former character-only preference.
+            self = .character(character)
+        } else {
+            return nil
+        }
+    }
+
+    var character: CameraCharacter? {
+        guard case .character(let character) = self else { return nil }
+        return character
+    }
+
+    var symbol: String {
+        switch self {
+        case .original: "📷"
+        case .character(let character): character.symbol
+        }
+    }
+
+    var name: String {
+        switch self {
+        case .original: "Original"
+        case .character(let character): character.name
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .original: "Unfiltered"
+        case .character(let character): character.subtitle
+        }
+    }
+
+    var identityColor: Color {
+        switch self {
+        case .original: Color(red: 0.54, green: 0.69, blue: 0.64)
+        case .character(let character): character.identityColor
+        }
+    }
+}
+
+nonisolated enum GradeStyle: String, CaseIterable, Codable, Identifiable, Sendable {
     case pure = "Pure"
     case air = "Air"
     case glow = "Glow"
@@ -184,6 +249,32 @@ nonisolated enum CaptureFormatOption: String, CaseIterable, Identifiable, Sendab
     var id: Self { self }
 }
 
+nonisolated enum CaptureMotionOption: String, CaseIterable, Identifiable, Sendable {
+    case photo = "Photo"
+    case livePhoto = "Live Photo"
+
+    var id: Self { self }
+}
+
+nonisolated struct CameraCharacterAdjustment: Equatable, Sendable {
+    var point = CGPoint(x: 0.5, y: 0.5)
+
+    static let centered = CameraCharacterAdjustment()
+}
+
+nonisolated struct EnhanceAdjustment: Equatable, Sendable {
+    var isEnabled = false
+    var exposureEV = 0.0
+    var redGain = 1.0
+    var greenGain = 1.0
+    var blueGain = 1.0
+    var highlightAmount = 1.0
+    var shadowAmount = 0.0
+    var contrast = 1.0
+
+    static let neutral = EnhanceAdjustment()
+}
+
 nonisolated struct GradeSettings: Equatable, Sendable {
     var style: GradeStyle = .pure
     var stylePoint = CGPoint(x: 0.5, y: 0.5)
@@ -191,6 +282,7 @@ nonisolated struct GradeSettings: Equatable, Sendable {
     var styleStrength: Double = 0.78
     var accentStrength: Double = 0.52
     var accent = AccentColor.warmGray
+    var enhance = EnhanceAdjustment.neutral
 }
 
 nonisolated struct AccentColor: Equatable, Sendable {
