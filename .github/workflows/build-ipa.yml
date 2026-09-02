@@ -1,0 +1,43 @@
+name: Build iOS IPA
+
+on:
+  workflow_dispatch: # 支持在 GitHub 页面手动点击运行
+  push:
+    branches:
+      - main # 或 master
+
+jobs:
+  build-ipa:
+    runs-on: macos-14 # 使用 GitHub 托管的 macOS Runner
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Select Xcode version
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+
+      - name: Build Archive (Unsigned)
+        run: |
+          xcodebuild clean archive \
+            -scheme "hibiscus-app" \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath $RUNNER_TEMP/hibiscus-app.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: Package to IPA
+        run: |
+          mkdir -p Payload
+          cp -r "$RUNNER_TEMP/hibiscus-app.xcarchive/Products/Applications/"*.app Payload/
+          zip -r -q "hibiscus-app.ipa" Payload/
+          rm -rf Payload
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hibiscus-app-ipa
+          path: hibiscus-app.ipa
+          retention-days: 7
