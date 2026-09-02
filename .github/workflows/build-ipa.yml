@@ -1,29 +1,63 @@
 name: Build iOS IPA
 
 on:
-  workflow_dispatch: # 支持在 GitHub 页面手动点击运行
+  workflow_dispatch:
   push:
     branches:
-      - main # 或 master
+      - main
+      - master
 
 jobs:
   build-ipa:
-    runs-on: macos-14 # 使用 GitHub 托管的 macOS Runner
+    runs-on: macos-14
     
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Select Xcode version
-        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+      - name: Inspect Project & Schemes
+        run: |
+          echo "=== 当前目录文件 ==="
+          ls -la
+          echo "=== 检测到的 Xcode 工程与 Scheme ==="
+          xcodebuild -list || true
 
       - name: Build Archive (Unsigned)
         run: |
+          # 1. 自动寻找 workspace 或 xcodeproj
+          WORKSPACE=$(find . -maxdepth 2 -name "*.xcworkspace" | head -n 1)
+          PROJECT=$(find . -maxdepth 2 -name "*.xcodeproj" | head -n 1)
+          
+          if [ -n "$WORKSPACE" ]; then
+            TARGET_ARG="-workspace $WORKSPACE"
+            echo "使用 Workspace: $WORKSPACE"
+          elif [ -n "$PROJECT" ]; then
+            TARGET_ARG="-project $PROJECT"
+            echo "使用 Project: $PROJECT"
+          else
+            echo "错误: 未找到任何 .xcworkspace 或 .xcodeproj 文件！"
+            exit 1
+          fi
+
+          # 2. 自动提取第一个可用的 Scheme
+          SCHEME=$(xcodebuild $TARGET_ARG -list -json | jq -r '.project.schemes[0] // .workspace.schemes[0]')
+          if [ -z "$SCHEME" ] || [ "$SCHEME" = "null" ]; then
+            # 回退方案：尝试查找 xcschemes 目录中的文件名
+            SCHEME=$(find . -name "*.xcscheme" -exec basename {} .xcscheme \; | head -n 1)
+          fi
+          
+          echo "使用 Scheme: $SCHEME"
+
+          # 3. 预先解析依赖包 (若有 SPM)
+          xcodebuild -resolvePackageDependencies $TARGET_ARG -scheme "$SCHEME" || true
+
+          # 4. 执行免签名打包
           xcodebuild clean archive \
-            -scheme "hibiscus-app" \
+            $TARGET_ARG \
+            -scheme "$SCHEME" \
             -configuration Release \
             -sdk iphoneos \
-            -archivePath $RUNNER_TEMP/hibiscus-app.xcarchive \
+            -archivePath "$RUNNER_TEMP/build.xcarchive" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY=""
@@ -31,7 +65,7 @@ jobs:
       - name: Package to IPA
         run: |
           mkdir -p Payload
-          cp -r "$RUNNER_TEMP/hibiscus-app.xcarchive/Products/Applications/"*.app Payload/
+          cp -r "$RUNNER_TEMP/build.xcarchive/Products/Applications/"*.app Payload/
           zip -r -q "hibiscus-app.ipa" Payload/
           rm -rf Payload
 
