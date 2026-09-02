@@ -134,3 +134,17 @@ Licensed under MPL-2.0.
 The MPL-2.0 applies to the covered source code of Hibiscus. Unless explicitly stated otherwise, the Hibiscus name, app icon, logos, visual identity, screenshots, and other brand or marketing assets are **not** licensed under the MPL-2.0.
 
 Forks and redistributed versions should use their own name, icon, and branding. Do not use Hibiscus branding in a way that could cause confusion about whether an unofficial build is the official Hibiscus app or is endorsed by the owner.
+
+## Unofficial builds and redistribution
+
+Hibiscus is open source, and you are welcome to build the source code for yourself.
+
+Official Hibiscus builds are distributed only through **TestFlight and the App Store**. Any IPA, sideloaded build, or binary distributed through other channels is not an official Hibiscus release.
+
+If you redistribute a modified or self-built version:
+
+- Clearly acknowledge that it is based on the Hibiscus open-source project.
+- Comply with the applicable source-code and license-notice requirements of the MPL-2.0.
+- Clearly identify the build as unofficial and not distributed or endorsed by the Hibiscus project.
+- Use your own app name, icon, logo, and other branding.
+- Do not present the build in a way that could reasonably be confused with an official Hibiscus release.
